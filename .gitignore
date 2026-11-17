@@ -20,3 +20,6 @@ Thumbs.db
 *.enc
 .rferram-vault/
 .simply-transfer/
+
+# Hybrid workflow plan (local, not tracked)
+STEPPED_IMPLEMENTATION_PLAN.md
