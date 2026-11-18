@@ -1149,7 +1149,7 @@ mod tests {
             .await
             .expect("Failed to open bidirectional stream");
         let bi_clipboard = WireMessage::Channel(VirtualChannelMessage::Clipboard(
-            ClipboardPayload::Files(vec!["/srv/devshare/archive.tar.zst".to_string()]),
+            ClipboardPayload::Files(vec!["/tmp/rferram-test/archive.tar.zst".to_string()]),
         ));
         let framed_bi = encode_length_prefixed(&bi_clipboard).unwrap();
         bi_send.write_all(&framed_bi).await.unwrap();
@@ -1164,7 +1164,9 @@ mod tests {
                     .clipboard_handler
                     .last_content()
                     .await
-                    == ClipboardContent::Files(vec!["/srv/devshare/archive.tar.zst".to_string()]);
+                    == ClipboardContent::Files(vec![
+                        "/tmp/rferram-test/archive.tar.zst".to_string(),
+                    ]);
                 if acked && clipboard_matched {
                     break;
                 }

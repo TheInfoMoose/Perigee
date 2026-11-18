@@ -114,7 +114,7 @@ mod tests {
             friendly_name: "Dev Workstation".to_string(),
             group_name: "Engineering".to_string(),
             vpn_binding: Some("wg0".to_string()),
-            folder_shares: vec!["/srv/devshare".to_string()],
+            folder_shares: vec!["/tmp/rferram-test".to_string()],
             ..Default::default()
         };
 
@@ -127,24 +127,24 @@ mod tests {
         assert_eq!(profile, decoded);
 
         let mut creds = HostCredentials {
-            username: "admin".to_string(),
-            secret: "super-secret-password".to_string(),
+            username: "testuser".to_string(),
+            secret: "testuser-password-fixture".to_string(),
             ed25519_public_key_hex: Some("deadbeef".to_string()),
         };
         let creds_debug = format!("{creds:?}");
         assert!(creds_debug.contains("[REDACTED]"));
-        assert!(!creds_debug.contains("super-secret-password"));
+        assert!(!creds_debug.contains("testuser-password-fixture"));
         creds.zeroize();
         assert!(creds.secret.is_empty());
 
         let mut token = VaultTokenModel {
-            session_token: "secret-jwt-or-opaque-token".to_string(),
+            session_token: "testuser-token-fixture".to_string(),
             auth_method: "Ed25519+P2P".to_string(),
             expires_at: 1_900_000_000,
         };
         let token_debug = format!("{token:?}");
         assert!(token_debug.contains("[REDACTED]"));
-        assert!(!token_debug.contains("secret-jwt-or-opaque-token"));
+        assert!(!token_debug.contains("testuser-token-fixture"));
         token.zeroize();
         assert!(token.session_token.is_empty());
         assert_eq!(token.expires_at, 0);

@@ -337,8 +337,8 @@ fn test_virtual_channel_all_variants_roundtrip() {
         })),
         WireMessage::Channel(VirtualChannelMessage::Clipboard(ClipboardPayload::Files(
             vec![
-                "/home/user/Documents/report.pdf".to_string(),
-                "/srv/devshare/archive.tar.zst".to_string(),
+                "/tmp/rferram-test/report.pdf".to_string(),
+                "/tmp/rferram-test/archive.tar.zst".to_string(),
             ],
         ))),
     ];

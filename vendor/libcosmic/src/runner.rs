@@ -1714,23 +1714,23 @@ mod tests {
         );
         assert_eq!(runner.focused_widget_id, Some(input_box.id));
 
-        assert!(runner.handle_text_input("10.0.0.12"));
-        assert_eq!(runner.app.input_value, "10.0.0.12");
-        assert_eq!(runner.caret_position, Some(9));
+        assert!(runner.handle_text_input("192.0.2.21"));
+        assert_eq!(runner.app.input_value, "192.0.2.21");
+        assert_eq!(runner.caret_position, Some(10));
 
-        // Backspace removes '2', then type "5:4433"
+        // Backspace removes '1', then type "5:4433"
         assert!(runner.handle_key_event(&Key::Named(NamedKey::Backspace), None, true));
-        assert_eq!(runner.app.input_value, "10.0.0.1");
+        assert_eq!(runner.app.input_value, "192.0.2.2");
         assert!(runner.handle_text_input("5:4433"));
-        assert_eq!(runner.app.input_value, "10.0.0.15:4433");
+        assert_eq!(runner.app.input_value, "192.0.2.25:4433");
 
         // Home + Delete removes leading '1', then insert '1' back
         assert!(runner.handle_key_event(&Key::Named(NamedKey::Home), None, true));
         assert_eq!(runner.caret_position, Some(0));
         assert!(runner.handle_key_event(&Key::Named(NamedKey::Delete), None, true));
-        assert_eq!(runner.app.input_value, "0.0.0.15:4433");
+        assert_eq!(runner.app.input_value, "92.0.2.25:4433");
         assert!(runner.handle_text_input("1"));
-        assert_eq!(runner.app.input_value, "10.0.0.15:4433");
+        assert_eq!(runner.app.input_value, "192.0.2.25:4433");
 
         // 5. Click Dropdown to cycle selection and test explicit option index selection
         let scene = runner.layout_scene();

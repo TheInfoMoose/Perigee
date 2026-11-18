@@ -103,12 +103,12 @@ mod tests {
                 id: String::from("prof-alpha"),
                 friendly_name: String::from("COSMIC Workstation Alpha"),
                 group_name: String::from("Group 1"),
-                host_address: String::from("10.10.0.12:4433"),
+                host_address: String::from("192.0.2.15:4433"),
                 vpn_binding: Some(String::from("wg0")),
                 auto_reconnect: true,
                 admin_session_takeover: false,
                 ask_credentials_on_connect: true,
-                folder_shares: vec![String::from("/srv/devshare")],
+                folder_shares: vec![String::from("/tmp/rferram-test")],
                 enable_speaker_audio: true,
                 enable_mic_passthrough: false,
             },
@@ -116,7 +116,7 @@ mod tests {
                 id: String::from("prof-beta"),
                 friendly_name: String::from("Windows 11 Build Node"),
                 group_name: String::from("Group 2"),
-                host_address: String::from("100.64.1.25:4433"),
+                host_address: String::from("192.0.2.16:4433"),
                 vpn_binding: Some(String::from("tailscale0")),
                 auto_reconnect: false,
                 admin_session_takeover: true,
@@ -143,7 +143,7 @@ mod tests {
         // Add a new profile via modal messages and mark it as favorite
         let _ = app.update(Message::OpenAddDesktopModal);
         let _ = app.update(Message::UpdateModalName("Arch Wayland Node".to_string()));
-        let _ = app.update(Message::UpdateModalHost("10.88.0.5:4433".to_string()));
+        let _ = app.update(Message::UpdateModalHost("192.0.2.17:4433".to_string()));
         let _ = app.update(Message::SelectModalVpn(VpnAdapterBinding::UniFiVpn));
         let _ = app.update(Message::SaveConnectionProfile);
         assert_eq!(app.connection_cards.len(), 3);
@@ -223,7 +223,7 @@ mod tests {
         // 1. Add a profile via modal -> automatically persisted to cosmic-config
         let _ = app.update(Message::OpenAddDesktopModal);
         let _ = app.update(Message::UpdateModalName("Fedora COSMIC Host".to_string()));
-        let _ = app.update(Message::UpdateModalHost("10.66.0.8:4433".to_string()));
+        let _ = app.update(Message::UpdateModalHost("192.0.2.18:4433".to_string()));
         let _ = app.update(Message::SelectModalVpn(VpnAdapterBinding::Tailscale));
         let _ = app.update(Message::SaveConnectionProfile);
         assert_eq!(app.connection_cards.len(), 3);

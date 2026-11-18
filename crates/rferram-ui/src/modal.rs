@@ -367,7 +367,7 @@ mod tests {
 
         // Populate modal fields and save new connection profile
         let _ = app.update(Message::UpdateModalName("SUSE Enterprise Host".to_string()));
-        let _ = app.update(Message::UpdateModalHost("10.20.30.40:4433".to_string()));
+        let _ = app.update(Message::UpdateModalHost("192.0.2.19:4433".to_string()));
         let _ = app.update(Message::SelectModalVpn(VpnAdapterBinding::WireGuard(
             "wg0".to_string(),
         )));
@@ -519,10 +519,10 @@ mod tests {
             .expect("missing modal host input node");
         let host_msg = host_box
             .node
-            .emit_input("10.55.0.12:4433")
+            .emit_input("192.0.2.20:4433")
             .expect("UpdateModalHost callback missing");
         let _ = app.update(host_msg);
-        assert_eq!(app.add_modal_state.host_input, "10.55.0.12:4433");
+        assert_eq!(app.add_modal_state.host_input, "192.0.2.20:4433");
 
         let name_box = modal_scene
             .boxes

@@ -2517,7 +2517,7 @@ mod tests {
 
         let written = draw_text(
             &mut pixmap,
-            "rFerram 10.0.10.15:4433",
+            "rFerram 192.0.2.10:4433",
             4.0,
             6.0,
             14,
@@ -2601,7 +2601,7 @@ mod tests {
                             8,
                             vec![
                                 text("Add Desktop").size(18).into(),
-                                text_input("Host name or IP address", "10.0.0.1:4433").into(),
+                                text_input("Host name or IP address", "192.0.2.1:4433").into(),
                                 button("Add").on_press(RasterTestMsg::Action).into(),
                             ],
                         ),
@@ -2693,7 +2693,7 @@ mod tests {
                         column(
                             8,
                             vec![
-                                text_input("Host name or IP address", "10.42.0.10:4433").into(),
+                                text_input("Host name or IP address", "192.0.2.12:4433").into(),
                                 text_input("Optional local only name", "").into(),
                             ],
                         ),
@@ -2709,7 +2709,7 @@ mod tests {
         let px_8 = scene_caret_8.rasterize(&Theme::dark());
         assert_eq!(px_0.width(), 800);
         assert_eq!(px_0.height(), 480);
-        // Because the first modal TextInput ("10.42.0.10:4433") is auto-focused rather than the
+        // Because the first modal TextInput ("192.0.2.12:4433") is auto-focused rather than the
         // trailing empty TextInput, changing caret_position from 0 to 8 moves the rendered caret bar.
         assert_ne!(px_0.data(), px_8.data());
     }

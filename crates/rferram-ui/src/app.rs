@@ -207,7 +207,7 @@ impl RFerramApp {
                     profile: ConnectionProfile {
                         id: String::from("prof-1"),
                         friendly_name: String::from("macOS Workstation M3"),
-                        host_address: String::from("10.0.10.15:4433"),
+                        host_address: String::from("192.0.2.10:4433"),
                         group_name: String::from("Group 1"),
                         vpn_binding: Some(String::from("utun3")),
                         ..Default::default()
@@ -221,7 +221,7 @@ impl RFerramApp {
                     profile: ConnectionProfile {
                         id: String::from("prof-2"),
                         friendly_name: String::from("Wayland Arch Build Box"),
-                        host_address: String::from("192.168.1.100:4433"),
+                        host_address: String::from("192.0.2.11:4433"),
                         group_name: String::from("Group 1"),
                         vpn_binding: Some(String::from("tailscale0")),
                         ..Default::default()
@@ -974,7 +974,7 @@ mod tests {
         );
 
         // Filter by host address
-        let _ = app.update(Message::SearchChanged("192.168.1.100".to_string()));
+        let _ = app.update(Message::SearchChanged("192.0.2.11".to_string()));
         let filtered_by_host = app.view_connection_grid().collect_text();
         assert!(!filtered_by_host.iter().any(|t| t == "macOS Workstation M3"));
         assert!(
@@ -1119,7 +1119,7 @@ mod tests {
 
         // 3. Open Add Desktop modal, Settings drawer, and Help drawer and rasterize at 1440x900
         let _ = app.update(Message::OpenAddDesktopModal);
-        let _ = app.update(Message::UpdateModalHost("10.42.0.10:4433".to_string()));
+        let _ = app.update(Message::UpdateModalHost("192.0.2.12:4433".to_string()));
         let _ = app.update(Message::OpenSettingsDrawer);
         let _ = app.update(Message::OpenDiagnosticsDrawer);
 
@@ -1136,7 +1136,7 @@ mod tests {
             "frosted modal and drawer overlays must alter the 1440x900 framebuffer"
         );
 
-        // Verify caret position on the modal's populated host input ("10.42.0.10:4433") alters rendered pixels
+        // Verify caret position on the modal's populated host input ("192.0.2.12:4433") alters rendered pixels
         let overlay_caret_0 = overlay_view
             .layout_scene(1440.0, 900.0)
             .with_caret_position(Some(0))
@@ -1156,7 +1156,7 @@ mod tests {
                 profile: ConnectionProfile {
                     id: format!("prof-overflow-{idx}"),
                     friendly_name: format!("Overflow Node {idx}"),
-                    host_address: format!("10.99.0.{idx}:4433"),
+                    host_address: format!("192.0.2.{}:4433", 100 + idx),
                     group_name: String::from("Group 1"),
                     vpn_binding: Some(String::from("wg0")),
                     ..Default::default()
@@ -1214,9 +1214,9 @@ mod tests {
         assert_eq!(runner.focused_widget_id, None);
 
         // 2. Typing while modal is open (even before clicking a modal input) targets the modal's top-z host input, never the occluded background search bar
-        assert!(runner.handle_text_input("10.77.0.9:4433"));
+        assert!(runner.handle_text_input("192.0.2.13:4433"));
         assert_eq!(runner.app.search_query, "");
-        assert_eq!(runner.app.add_modal_state.host_input, "10.77.0.9:4433");
+        assert_eq!(runner.app.add_modal_state.host_input, "192.0.2.13:4433");
 
         let modal_scene = runner.layout_scene();
         let name_input = modal_scene
@@ -1637,7 +1637,7 @@ mod tests {
         assert_eq!(app.active_context_menu, None);
         assert!(app.add_modal_open);
         assert_eq!(app.add_modal_state.name_input, "macOS Workstation M3");
-        assert_eq!(app.add_modal_state.host_input, "10.0.10.15:4433");
+        assert_eq!(app.add_modal_state.host_input, "192.0.2.10:4433");
         assert_eq!(
             app.add_modal_state.selected_vpn,
             VpnAdapterBinding::WireGuard("utun3".to_string())

@@ -23,7 +23,7 @@ pub struct DiscoveredNetworkAdapter {
 pub enum VpnInterfaceBinding {
     /// Use OS default routing table
     DefaultSystemRoute,
-    /// Bind explicitly to an IP address (e.g. WireGuard local IP `10.0.0.2`)
+    /// Bind explicitly to an IP address (e.g. WireGuard local IP `192.0.2.2`)
     SpecificIp(IpAddr),
     /// Bind explicitly to a system interface name (e.g. `wg0`, `tailscale0`, `utun3`)
     InterfaceName(String),

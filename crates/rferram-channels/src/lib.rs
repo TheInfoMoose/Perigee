@@ -74,13 +74,13 @@ mod tests {
 
         manager
             .route_channel_message(VirtualChannelMessage::Clipboard(ClipboardPayload::Files(
-                vec!["/srv/devshare/report.pdf".to_string()],
+                vec!["/tmp/rferram-test/report.pdf".to_string()],
             )))
             .await
             .expect("Routing ClipboardPayload::Files should succeed");
         assert_eq!(
             manager.clipboard_handler.last_content().await,
-            ClipboardContent::Files(vec!["/srv/devshare/report.pdf".to_string()])
+            ClipboardContent::Files(vec!["/tmp/rferram-test/report.pdf".to_string()])
         );
     }
 
@@ -100,8 +100,8 @@ mod tests {
             })),
             WireMessage::Channel(VirtualChannelMessage::Clipboard(ClipboardPayload::Files(
                 vec![
-                    "/srv/devshare/alpha.tar.zst".to_string(),
-                    "/srv/devshare/beta.sig".to_string(),
+                    "/tmp/rferram-test/alpha.tar.zst".to_string(),
+                    "/tmp/rferram-test/beta.sig".to_string(),
                 ],
             ))),
         ];
