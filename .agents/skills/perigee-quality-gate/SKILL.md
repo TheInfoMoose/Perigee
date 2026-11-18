@@ -1,32 +1,32 @@
 ---
-name: rferram-quality-gate
+name: perigee-quality-gate
 description: >-
-  Enforces the mandatory rFerram formatting, clippy linting, unit/integration test,
+  Enforces the mandatory Perigee formatting, clippy linting, unit/integration test,
   and daemon smoke-test quality gate. Activate this skill at the conclusion of every
   implementation task or whenever verifying workspace build health.
 ---
 
-# rFerram Quality Gate & Verification Skill
+# Perigee Quality Gate & Verification Skill
 
-Every atomic implementation task in the **rFerram** workspace must pass this verification sequence before completion.
+Every atomic implementation task in the **Perigee** workspace must pass this verification sequence before completion.
 
 ## 1. Automated Verification Helper
 
-Run the bundled verification script from `/srv/devshare/rFerram`:
+Run the bundled verification script from the repository root:
 
 ```bash
-/srv/devshare/rFerram/.agents/skills/rferram-quality-gate/scripts/verify-crate.sh <crate-name>
+.agents/skills/perigee-quality-gate/scripts/verify-crate.sh <crate-name>
 ```
 
 * Omit `<crate-name>` (or pass `--all`) to run tests across the entire 7-crate workspace.
-* Example for `rferram-net`:
+* Example for `perigee-net`:
   ```bash
-  /srv/devshare/rFerram/.agents/skills/rferram-quality-gate/scripts/verify-crate.sh rferram-net
+  .agents/skills/perigee-quality-gate/scripts/verify-crate.sh perigee-net
   ```
 
 ## 2. Manual Step-by-Step Verification Sequence
 
-If running individual steps manually inside `/srv/devshare/rFerram`:
+If running individual steps manually from the repository root:
 
 1. **Format Code (`rustfmt` Edition 2024)**:
    ```bash
@@ -45,9 +45,9 @@ If running individual steps manually inside `/srv/devshare/rFerram`:
    ```bash
    cargo test --workspace --all-targets --locked
    ```
-5. **Host Daemon Smoke Test (When modifying `rferram-server` or `rferram-net`)**:
+5. **Host Daemon Smoke Test (When modifying `perigee-host` or `perigee-net`)**:
    ```bash
-   RFERRAM_SMOKE_TEST=1 RFERRAM_BIND_ADDR=127.0.0.1:0 cargo run -p rferram-server --locked
+   PERIGEE_SMOKE_TEST=1 PERIGEE_BIND_ADDR=127.0.0.1:0 cargo run -p perigee-host --locked
    ```
 
 ## 3. Troubleshooting Common Gate Failures

@@ -1,6 +1,6 @@
 # Solo Developer Branching & Development Guide
 
-This guide outlines the branching strategy, commit conventions, local quality gates, and release workflows for **rFerram**. Even when operating as a solo developer, adhering to strict branch hygiene and automated CI checks maintains main-branch stability and ensures zero-regression development.
+This guide outlines the branching strategy, commit conventions, local quality gates, and release workflows for **Perigee**. Even when operating as a solo developer, adhering to strict branch hygiene and automated CI checks maintains main-branch stability and ensures zero-regression development.
 
 ---
 
@@ -27,17 +27,17 @@ The repository follows a modified **GitHub Flow** tailored for modular Rust work
 
 ## 2. Local Pre-Merge Quality Checklist
 
-Before merging any topic branch into `main`, run the following verification suite locally to match CI requirements:
+Before merging any topic branch into `main`, run the following verification suite locally to match CI and `AGENTS.md` requirements:
 
 ```bash
 # 1. Check code formatting
-cargo fmt --check
+cargo fmt --all -- --check
 
 # 2. Run Clippy across all workspace crates and targets (strict mode)
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --locked -- -D warnings
 
 # 3. Run full unit & integration test suite against locked dependencies
-cargo test --locked
+cargo test --workspace --all-targets --locked
 
 # 4. Security vulnerability & license check
 cargo audit
@@ -52,9 +52,9 @@ Adhere to **Conventional Commits** to keep git history clean, readable, and easy
 
 * `feat(net)`: add socket2 interface binding for WireGuard and Tailscale adapters
 * `fix(channels)`: suppress loopback echo on native clipboard sync
-* `refactor(server)`: extract macOS ScreenCaptureKit logic into dedicated host encoder module
+* `refactor(host)`: extract macOS ScreenCaptureKit logic into dedicated host encoder module
 * `test(protocol)`: add roundtrip serialization tests for VideoFrameMessage
-* `ci`: update GitHub Actions cross-platform matrix to Rust 1.80+
+* `ci`: update GitHub Actions cross-platform matrix to Rust 1.93+
 
 ---
 
@@ -73,5 +73,5 @@ Even when self-merging pull requests:
 To prevent upstream incremental releases from breaking builds:
 
 * Always commit `Cargo.lock`.
-* Run builds with `--locked` in CI.
+* Run builds with `--locked` in CI and local development.
 * Review automated Dependabot PRs in isolated feature branches rather than floating main dependencies.

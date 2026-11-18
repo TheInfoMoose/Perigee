@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKSPACE_DIR="/srv/devshare/rFerram"
+WORKSPACE_DIR="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 TARGET_CRATE="${1:---all}"
 
 cd "${WORKSPACE_DIR}"
@@ -20,7 +20,7 @@ else
     cargo test -p "${TARGET_CRATE}" --all-targets --locked
 fi
 
-echo "==> [4/4] Running rferram-server smoke test..."
-RFERRAM_SMOKE_TEST=1 RFERRAM_BIND_ADDR="127.0.0.1:0" cargo run -p rferram-server --locked
+echo "==> [4/4] Running perigee-host smoke test..."
+PERIGEE_SMOKE_TEST=1 PERIGEE_BIND_ADDR="127.0.0.1:0" cargo run -p perigee-host --locked
 
 echo "==> Quality Gate PASSED successfully."

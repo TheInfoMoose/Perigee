@@ -1,25 +1,25 @@
 ---
-name: rferram-capture-and-compositor
+name: perigee-capture-and-compositor
 description: >-
-  Procedures and invariants for implementing and modifying rferram-server and
-  rferram-client (Wayland/Smithay DMABUF capture and virtual input, Windows DXGI
+  Procedures and invariants for implementing and modifying perigee-host and
+  perigee-client (Wayland/Smithay DMABUF capture and virtual input, Windows DXGI
   and SendInput, macOS objc2 ScreenCaptureKit/VideoToolbox/CGEvent, rav1e AV1
-  encoding, wgpu 30.0.1 zero-copy WGSL rendering, and latency feedback loops).
+  encoding, wgpu 30.0.1 WGSL rendering, and latency feedback loops).
 ---
 
-# rFerram Host Capture, Compositor & Client Render Pipeline Skill
+# Perigee Host Capture, Compositor & Client Render Pipeline Skill
 
-Activate this skill when working on Phase 4 (`crates/rferram-server`) or Phase 5 (`crates/rferram-client`).
+Activate this skill when working on `crates/perigee-host` or `crates/perigee-client`.
 
-## 1. Local Reference Archives
+## 1. Upstream Reference Projects
 
-When inspecting upstream Smithay Wayland compositor APIs, DRM/GBM buffer handling, or virtual input protocols, consult the local reference archive first:
-- **Smithay Reference Archive**: `/home/theinfomoose/Documents/Smithay/smithay-master.zip`
-- **COSMIC Compositor Reference**: `/home/theinfomoose/Documents/Cosmic Elements/cosmic-comp-master.zip`
+When inspecting upstream Smithay Wayland compositor APIs, DRM/GBM buffer handling, or virtual input protocols, consult the upstream repositories:
+- **Smithay**: https://github.com/Smithay/smithay
+- **COSMIC Compositor (`cosmic-comp`)**: https://github.com/pop-os/cosmic-comp
 
 ## 2. Locked Platform Dependencies (`Cargo.toml`)
 
-Because `--locked` is mandatory, only use the platform crates declared in `/srv/devshare/rFerram/Cargo.toml`:
+Because `--locked` is mandatory, only use the platform crates declared in `Cargo.toml`:
 - **Linux (`#[cfg(target_os = "linux")]`)**:
   - `smithay-client-toolkit = "0.19.2"`, `wayland-client = "0.31.15"`, `wayland-backend = "0.3.17"`, `wayland-protocols = "0.32.13"`, `wayland-protocols-wlr = "0.3.12"`, `calloop = "0.14.5"`, `drm = "0.14.1"`, `drm-fourcc = "2.2.0"`, `gbm = "0.18.0"`, `input = "0.10.0"`, `libseat = "0.2.4"`, `udev = "0.9.3"`, `xkbcommon = "0.9.0"`, `x11rb = "0.13.2"`, `zbus = "5.19.0"`.
 - **Windows (`#[cfg(target_os = "windows")]`)**:
@@ -40,8 +40,8 @@ Because `--locked` is mandatory, only use the platform crates declared in `/srv/
    - Every `unsafe` call to Win32 `SendInput`/`IDXGIOutputDuplication`, macOS `CGEvent`/`IOSurface`, or Linux DRM/X11 must include a `// SAFETY:` block.
 
 ## 4. Verification
-Run the quality gate for `rferram-server` and `rferram-client`:
+Run the quality gate for `perigee-host` and `perigee-client`:
 ```bash
-/srv/devshare/rFerram/.agents/skills/rferram-quality-gate/scripts/verify-crate.sh rferram-server
-/srv/devshare/rFerram/.agents/skills/rferram-quality-gate/scripts/verify-crate.sh rferram-client
+.agents/skills/perigee-quality-gate/scripts/verify-crate.sh perigee-host
+.agents/skills/perigee-quality-gate/scripts/verify-crate.sh perigee-client
 ```
