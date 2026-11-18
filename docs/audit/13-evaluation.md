@@ -125,3 +125,15 @@ Each has Claude's recommendation first. The first four change what Phase 2+ look
 - **Headless and the greeter push the host below the user session.** Unattended access before login means the host must reach the greeter's compositor session, which runs as a separate user. The `xdg-desktop-portal` route recommended above needs a consent dialog in a logged-in session, so it can't serve the greeter or unattended access. The likely route is compositor-level protocols (screen copy, virtual pointer/keyboard, or libei) against cosmic-comp, plus a privileged system service that follows the active seat from greeter to user session. **(Suspected: needs a research spike against cosmic-comp and cosmic-greeter before Phase 5 is written.)**
 - **Phase 5 grows**, and a research step (what cosmic-comp exposes for headless outputs, capture, input and greeter handoff) comes first.
 - **R6 is reordered:** headless and session takeover first, screen share after.
+
+### Follow-up decisions (user, 2026-11-17)
+5. **v1 scope, "RustDesk-class but better implemented":**
+   - **Unattended access including the login screen** (cosmic-greeter), following the seat into the user session.
+   - **Multi-monitor, stable.**
+   - **Native scaling:** a headless host shown at the client's resolution (example: a headless gaming rig viewed at the laptop's native resolution), not a scrolling window or a tiny strip. This implies a virtual output sized to the client, resized when the client changes (TopologyMessage `ResizeRequest` becomes real).
+   - **Clipboard and file transfer** in v1.
+   - **Audio** can follow v1, but should ship close to it.
+   - Rationale: RustDesk's Wayland support is "experimental"; Perigee's should be stable.
+6. **R1 stays: direct P2P only.** No ID or relay server.
+7. **Full rename to Perigee in Phase 2:** crates (`perigee-*`), binaries, packaging, config paths and docs, in its own steps before new crates are added. Renaming the repository folder is the user's step.
+8. **Evaluation defaults 5–12 accepted.** With the rename, the light destination app is `perigee-host` (daemon + setup subcommands) and the full CLI is `perigee`. Audio follows item 5.
