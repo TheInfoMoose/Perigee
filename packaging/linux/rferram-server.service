@@ -5,7 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Environment="RFERRAM_BIND_ADDR=0.0.0.0:4433"
+# Set RFERRAM_BIND_INTERFACE=<vpn interface> (e.g. wg0) in a drop-in;
+# without it the host listens on 127.0.0.1:4433 only.
 ExecStart=/usr/bin/rferram-server
 Restart=on-failure
 RestartSec=5

@@ -60,6 +60,9 @@ pub use daemon::{ED25519_AUTH_HEADER_BYTES, HostSessionEngine, RFerramHostDaemon
 pub mod encoder;
 pub use encoder::{EncoderConfig, MacOsVideoToolboxEncoder, SoftwareVideoEncoder, VideoEncoder};
 
+pub mod host;
+pub use host::{run_host, shutdown_signal};
+
 /// Operating System Display & Frame Capture Backend
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureBackendType {
