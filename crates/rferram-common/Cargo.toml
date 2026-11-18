@@ -17,6 +17,5 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 simply-transfer-crypto = { workspace = true }
 thiserror = { workspace = true }
-tracing = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }

@@ -10,11 +10,12 @@ description = "Remote viewer session pipeline engine, wgpu presenter, and latenc
 
 [dependencies]
 anyhow = { workspace = true }
-bytemuck = { workspace = true }
 rferram-channels = { workspace = true }
-rferram-common = { workspace = true }
 rferram-net = { workspace = true }
 rferram-protocol = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 wgpu = { workspace = true }
+
+[dev-dependencies]
+rferram-common = { workspace = true }

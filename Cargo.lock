@@ -871,18 +871,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b5343afd4a8365a643ac588dab4cf234a190c7f6c88c9f6dd6ffe00837661b7"
 
 [[package]]
-name = "fastbloom"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef975e30683b2d965054bb0a836f8973857c4ebf6acf274fe46617cd285060d8"
-dependencies = [
- "foldhash",
- "libm",
- "portable-atomic",
- "siphasher",
-]
-
-[[package]]
 name = "fax"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2149,7 +2137,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e750cca55fe4f0439a15d0bb529da9651e79993e8e72c61a899a36d462befbe"
 dependencies = [
  "bytes",
- "fastbloom",
  "getrandom 0.4.3",
  "lru-slab",
  "rand",
@@ -2351,7 +2338,6 @@ name = "rferram-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytemuck",
  "rferram-channels",
  "rferram-common",
  "rferram-net",
@@ -2373,7 +2359,6 @@ dependencies = [
  "sha2 0.11.0",
  "simply-transfer-crypto",
  "thiserror 2.0.21",
- "tracing",
  "uuid",
  "zeroize",
 ]
@@ -2384,9 +2369,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "if-addrs",
- "libc",
  "quinn",
- "quinn-proto",
  "rcgen",
  "rferram-common",
  "rferram-protocol",
@@ -2427,13 +2410,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "wayland-backend",
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
- "wgpu",
  "windows",
- "windows-sys 0.61.2",
  "x11rb",
  "xkbcommon",
 ]
@@ -2768,12 +2748,6 @@ dependencies = [
  "windows-native-keyring-store",
  "zeroize",
 ]
-
-[[package]]
-name = "siphasher"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 
 [[package]]
 name = "slab"
@@ -3138,7 +3112,6 @@ version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
 dependencies = [
- "log",
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",
