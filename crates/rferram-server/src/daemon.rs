@@ -1029,17 +1029,7 @@ mod tests {
             }))
             .expect("Failed to send FrameAck datagram");
 
-        // 5. Send inbound VirtualChannelMessage over QUIC uni stream, bi stream, and datagram
-        client_conn
-            .send_uni_message(&WireMessage::Channel(
-                VirtualChannelMessage::DevicePassthrough {
-                    device_id: "yubikey-fido2-0".to_string(),
-                    data: vec![0xCA, 0xFE, 0xBA, 0xBE],
-                },
-            ))
-            .await
-            .expect("Failed to send DevicePassthrough over uni stream");
-
+        // 5. Send inbound VirtualChannelMessage over QUIC bi stream
         let (mut bi_send, _bi_recv) = client_conn
             .open_bidirectional_stream()
             .await
@@ -1051,32 +1041,17 @@ mod tests {
         bi_send.write_all(&framed_bi).await.unwrap();
         bi_send.finish().unwrap();
 
-        client_conn
-            .send_datagram(&WireMessage::Channel(
-                VirtualChannelMessage::RequestElevation,
-            ))
-            .expect("Failed to send RequestElevation over datagram");
-
         // Poll briefly for async inbound datagram, uni-stream, and bi-stream handlers to process messages
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let acked = session.last_acked_frame_id.load(Ordering::SeqCst) == 77;
-                let elevated = session
-                    .channel_manager
-                    .elevation_handler
-                    .is_session_elevated();
-                let dev_frames = session
-                    .channel_manager
-                    .device_handler
-                    .frames_for_device("yubikey-fido2-0")
-                    .await;
                 let clipboard_matched = session
                     .channel_manager
                     .clipboard_handler
                     .last_content()
                     .await
                     == ClipboardContent::Files(vec!["/srv/devshare/archive.tar.zst".to_string()]);
-                if acked && elevated && dev_frames.len() == 1 && clipboard_matched {
+                if acked && clipboard_matched {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;

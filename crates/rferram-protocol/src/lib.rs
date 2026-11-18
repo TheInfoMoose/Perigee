@@ -143,11 +143,6 @@ impl WireMessage {
                     ClipboardPayload::Image { format, data, .. } => format.len() + data.len(),
                     ClipboardPayload::Files(files) => files.iter().map(String::len).sum(),
                 },
-                VirtualChannelMessage::SimplyTransfer(data) => data.len(),
-                VirtualChannelMessage::DevicePassthrough { device_id, data } => {
-                    device_id.len() + data.len()
-                }
-                VirtualChannelMessage::RequestElevation => 0,
             },
         }
     }
@@ -407,15 +402,12 @@ pub enum ColorSubsampling {
 }
 
 // ============================================================================
-// 7. VIRTUAL CHANNELS (Clipboard, File Transfer, Passthrough)
+// 7. VIRTUAL CHANNELS (Clipboard)
 // ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum VirtualChannelMessage {
     Clipboard(ClipboardPayload),
-    SimplyTransfer(Vec<u8>), // Wraps ST_Rust_Age snapshot/transfer packets
-    DevicePassthrough { device_id: String, data: Vec<u8> },
-    RequestElevation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

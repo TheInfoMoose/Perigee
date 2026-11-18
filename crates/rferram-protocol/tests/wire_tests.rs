@@ -341,14 +341,6 @@ fn test_virtual_channel_all_variants_roundtrip() {
                 "/srv/devshare/archive.tar.zst".to_string(),
             ],
         ))),
-        WireMessage::Channel(VirtualChannelMessage::SimplyTransfer(vec![
-            0x53, 0x54, 0x5F, 0x41, 0x47, 0x45, 0x00, 0x01,
-        ])),
-        WireMessage::Channel(VirtualChannelMessage::DevicePassthrough {
-            device_id: "usb:1050:0407-yubikey".to_string(),
-            data: vec![0x90, 0x00],
-        }),
-        WireMessage::Channel(VirtualChannelMessage::RequestElevation),
     ];
 
     for msg in &variants {
@@ -359,11 +351,13 @@ fn test_virtual_channel_all_variants_roundtrip() {
 #[test]
 fn test_oversized_frame_rejected_on_encode() {
     // 1. Inner payload strictly larger than MAX_WIRE_FRAME_BYTES (caught by pre-serialization check)
-    let oversized_msg = WireMessage::Channel(VirtualChannelMessage::SimplyTransfer(vec![
-        0u8;
-        MAX_WIRE_FRAME_BYTES
-            + 1
-    ]));
+    let oversized_msg =
+        WireMessage::Channel(VirtualChannelMessage::Clipboard(ClipboardPayload::Image {
+            width: 1,
+            height: 1,
+            format: String::new(),
+            data: vec![0u8; MAX_WIRE_FRAME_BYTES + 1],
+        }));
 
     let err = encode_wire_message(&oversized_msg)
         .expect_err("encode_wire_message must reject payload > MAX_WIRE_FRAME_BYTES");
@@ -380,10 +374,13 @@ fn test_oversized_frame_rejected_on_encode() {
     }
 
     // 2. Inner payload equal to MAX_WIRE_FRAME_BYTES, whose serialized envelope exceeds MAX_WIRE_FRAME_BYTES
-    let boundary_msg = WireMessage::Channel(VirtualChannelMessage::SimplyTransfer(vec![
-        0u8;
-        MAX_WIRE_FRAME_BYTES
-    ]));
+    let boundary_msg =
+        WireMessage::Channel(VirtualChannelMessage::Clipboard(ClipboardPayload::Image {
+            width: 1,
+            height: 1,
+            format: String::new(),
+            data: vec![0u8; MAX_WIRE_FRAME_BYTES],
+        }));
 
     let boundary_err = encode_wire_message(&boundary_msg).expect_err(
         "encode_wire_message must reject message when envelope + payload > MAX_WIRE_FRAME_BYTES",

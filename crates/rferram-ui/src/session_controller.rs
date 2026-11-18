@@ -1094,23 +1094,6 @@ mod tests {
             ClipboardContent::Text(String::from("ui-session-clipboard-sync"))
         );
 
-        // Also test routing an elevation request through WireMessageReceived on RFerramApp
-        let _ = app.update(Message::WireMessageReceived {
-            profile_id: profile_id.clone(),
-            msg: WireMessage::Channel(VirtualChannelMessage::RequestElevation),
-        });
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while !active_session
-                .channel_manager
-                .elevation_handler
-                .is_session_elevated()
-            {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .expect("Expected VirtualChannelManager elevation handler to process RequestElevation");
-
         // 7. Send peripheral input from ActiveUiSession over QuicSessionBridge datagram channel
         active_session
             .send_input(InputEvent::MouseButton {
