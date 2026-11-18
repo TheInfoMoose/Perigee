@@ -1,8 +1,8 @@
 //! Taffy (`0.10.1`) Layout Engine & Cursor Hit-Testing for `libcosmic` (`cosmic`)
 //!
 //! Converts declarative [`Element`] and [`WidgetNode`] trees (including `Row`, `Column`, `Grid`,
-//! `Container`, `Scrollable`, and the modal/drawer overlay classes `rferram-add-desktop-modal`,
-//! `rferram-settings-drawer`, and `rferram-help-drawer`) into positioned [`LayoutBox`] records
+//! `Container`, `Scrollable`, and the modal/drawer overlay classes `perigee-add-desktop-modal`,
+//! `perigee-settings-drawer`, and `perigee-help-drawer`) into positioned [`LayoutBox`] records
 //! for a given viewport `(width, height)`, and resolves cursor click coordinates to interactive
 //! widget IDs or cloned `Message` (`M`) values from `Button` and `Toggler` nodes.
 
@@ -15,67 +15,67 @@ use taffy::{Overflow, Point};
 use crate::{Element, WidgetNode};
 
 /// Container class name for the root application shell.
-pub const CLASS_ROOT_SHELL: &str = "rferram-root-shell";
+pub const CLASS_ROOT_SHELL: &str = "perigee-root-shell";
 
 /// Container class name for the outer header wrapper.
-pub const CLASS_HEADER: &str = "rferram-header";
+pub const CLASS_HEADER: &str = "perigee-header";
 
 /// Container class name for the upper window tab bar (`Connections` tab, `+`, Settings, Help).
-pub const CLASS_TOP_TABBAR: &str = "rferram-top-tabbar";
+pub const CLASS_TOP_TABBAR: &str = "perigee-top-tabbar";
 
 /// Container class name for the second-tier action toolbar (`+`, segmented view/sort pills, search pill).
-pub const CLASS_TOOLBAR: &str = "rferram-toolbar";
+pub const CLASS_TOOLBAR: &str = "perigee-toolbar";
 
 /// Container class name for a capsule-grouped segmented icon button pill (`Grid | List`, `Sort | Filter`).
-pub const CLASS_SEGMENTED_PILL: &str = "rferram-segmented-pill";
+pub const CLASS_SEGMENTED_PILL: &str = "perigee-segmented-pill";
 
 /// Container class name for the rounded capsule search bar in the toolbar.
-pub const CLASS_SEARCH_PILL: &str = "rferram-search-pill";
+pub const CLASS_SEARCH_PILL: &str = "perigee-search-pill";
 
 /// Container class name for the left navigation sidebar.
-pub const CLASS_SIDEBAR: &str = "rferram-sidebar";
+pub const CLASS_SIDEBAR: &str = "perigee-sidebar";
 
 /// Container class name for a connection group section.
-pub const CLASS_GROUP_SECTION: &str = "rferram-group-section";
+pub const CLASS_GROUP_SECTION: &str = "perigee-group-section";
 
 /// Container class name for a raised group tab badge (`Group 1`).
-pub const CLASS_GROUP_BADGE: &str = "rferram-group-badge";
+pub const CLASS_GROUP_BADGE: &str = "perigee-group-badge";
 
 /// Container class name for a portrait connection card with upper preview sheen and double border.
-pub const CLASS_CONNECTION_CARD: &str = "rferram-connection-card";
+pub const CLASS_CONNECTION_CARD: &str = "perigee-connection-card";
 
 /// Container class name for the floating card context menu popup (`Connect`, `Configure`, `Duplicate`, `Export`, `Delete`).
-pub const CLASS_CONTEXT_MENU: &str = "rferram-context-menu";
+pub const CLASS_CONTEXT_MENU: &str = "perigee-context-menu";
 
 /// Container class name for the floating `+` quick-action menu popup (`Add`, `Import`, `Export`).
-pub const CLASS_ADD_MENU: &str = "rferram-add-menu";
+pub const CLASS_ADD_MENU: &str = "perigee-add-menu";
 
 /// Container class name for a horizontal `Label : Control` form row inside modals/drawers.
-pub const CLASS_FORM_ROW: &str = "rferram-form-row";
+pub const CLASS_FORM_ROW: &str = "perigee-form-row";
 
 /// Container class name for the segmented modal tab bar (`General | Display | Devices | Audio | Folders`).
-pub const CLASS_MODAL_TABS: &str = "rferram-modal-tabs";
+pub const CLASS_MODAL_TABS: &str = "perigee-modal-tabs";
 
 /// Container class name for the bordered inner tab content frame inside the "Add Desktop" modal.
-pub const CLASS_MODAL_TAB_FRAME: &str = "rferram-modal-tab-frame";
+pub const CLASS_MODAL_TAB_FRAME: &str = "perigee-modal-tab-frame";
 
 /// Container class name for the bottom-right action footer (`Cancel | Add`) inside the modal.
-pub const CLASS_MODAL_FOOTER: &str = "rferram-modal-footer";
+pub const CLASS_MODAL_FOOTER: &str = "perigee-modal-footer";
 
 /// Container class name for the left category navigation pane inside a split context drawer.
-pub const CLASS_DRAWER_NAV: &str = "rferram-drawer-nav";
+pub const CLASS_DRAWER_NAV: &str = "perigee-drawer-nav";
 
 /// Container class name for the right detail content pane inside a split context drawer.
-pub const CLASS_DRAWER_CONTENT: &str = "rferram-drawer-content";
+pub const CLASS_DRAWER_CONTENT: &str = "perigee-drawer-content";
 
 /// Container class name for the "Add Desktop" modal overlay.
-pub const CLASS_ADD_DESKTOP_MODAL: &str = "rferram-add-desktop-modal";
+pub const CLASS_ADD_DESKTOP_MODAL: &str = "perigee-add-desktop-modal";
 
 /// Container class name for the Settings context drawer overlay.
-pub const CLASS_SETTINGS_DRAWER: &str = "rferram-settings-drawer";
+pub const CLASS_SETTINGS_DRAWER: &str = "perigee-settings-drawer";
 
 /// Container class name for the Help / Diagnostics context drawer overlay.
-pub const CLASS_HELP_DRAWER: &str = "rferram-help-drawer";
+pub const CLASS_HELP_DRAWER: &str = "perigee-help-drawer";
 
 /// Axis-aligned 2D bounding box in logical viewport coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -184,8 +184,8 @@ impl<M> LayoutBox<M> {
         )
     }
 
-    /// Returns `true` if this node is an overlay container (`rferram-add-desktop-modal`,
-    /// `rferram-settings-drawer`, or `rferram-help-drawer`).
+    /// Returns `true` if this node is an overlay container (`perigee-add-desktop-modal`,
+    /// `perigee-settings-drawer`, or `perigee-help-drawer`).
     pub fn is_overlay_container(&self) -> bool {
         self.class
             .as_deref()
@@ -234,7 +234,7 @@ pub fn is_overlay_container_class(class: &str) -> bool {
     )
 }
 
-/// Returns `true` if `class` is a floating popup menu (`rferram-context-menu` or `rferram-add-menu`).
+/// Returns `true` if `class` is a floating popup menu (`perigee-context-menu` or `perigee-add-menu`).
 pub fn is_popup_menu_class(class: &str) -> bool {
     matches!(class, CLASS_CONTEXT_MENU | CLASS_ADD_MENU)
 }
@@ -1805,12 +1805,12 @@ mod tests {
     #[test]
     fn test_row_column_grid_and_scrollable_layout() {
         let view: Element<'_, TestMsg> = container(
-            "rferram-root-shell",
+            "perigee-root-shell",
             column(
                 12,
                 vec![
                     container(
-                        "rferram-header",
+                        "perigee-header",
                         row(
                             10,
                             vec![
@@ -1824,17 +1824,17 @@ mod tests {
                         16,
                         vec![
                             container(
-                                "rferram-sidebar",
+                                "perigee-sidebar",
                                 column(8, vec![button("Favorites").into(), divider()]),
                             ),
                             scrollable(container(
-                                "rferram-group-section",
+                                "perigee-group-section",
                                 grid(
                                     3,
                                     16,
                                     vec![
                                         container(
-                                            "rferram-connection-card",
+                                            "perigee-connection-card",
                                             column(
                                                 6,
                                                 vec![
@@ -1846,7 +1846,7 @@ mod tests {
                                             ),
                                         ),
                                         container(
-                                            "rferram-connection-card",
+                                            "perigee-connection-card",
                                             column(
                                                 6,
                                                 vec![
@@ -1871,7 +1871,7 @@ mod tests {
 
         // Root shell occupies the 1440x900 viewport
         let root_box = &boxes[0];
-        assert_eq!(root_box.class.as_deref(), Some("rferram-root-shell"));
+        assert_eq!(root_box.class.as_deref(), Some("perigee-root-shell"));
         assert_eq!(root_box.x, 0.0);
         assert_eq!(root_box.y, 0.0);
         assert_eq!(root_box.width, 1440.0);
@@ -1880,7 +1880,7 @@ mod tests {
         // Two connection cards in a 3-column grid must be positioned horizontally side by side
         let card_boxes: Vec<&LayoutBox<TestMsg>> = boxes
             .iter()
-            .filter(|b| b.class.as_deref() == Some("rferram-connection-card"))
+            .filter(|b| b.class.as_deref() == Some("perigee-connection-card"))
             .collect();
         assert_eq!(card_boxes.len(), 2);
         assert!(card_boxes[1].x > card_boxes[0].x + card_boxes[0].width);
@@ -1890,7 +1890,7 @@ mod tests {
     #[test]
     fn test_button_and_toggler_cursor_hit_testing() {
         let tree: Element<'_, TestMsg> = container(
-            "rferram-root-shell",
+            "perigee-root-shell",
             column(
                 10,
                 vec![
@@ -1941,12 +1941,12 @@ mod tests {
     #[test]
     fn test_modal_and_drawer_overlays_positioning_and_hit_occlusion() {
         let tree: Element<'_, TestMsg> = container(
-            "rferram-root-shell",
+            "perigee-root-shell",
             column(
                 12,
                 vec![
                     container(
-                        "rferram-header",
+                        "perigee-header",
                         row(12, vec![button("+").on_press(TestMsg::OpenModal).into()]),
                     ),
                     container(
@@ -2027,7 +2027,7 @@ mod tests {
         }
 
         let tree: Element<'_, TestMsg> = container(
-            "rferram-root-shell",
+            "perigee-root-shell",
             column(
                 10,
                 vec![
@@ -2079,7 +2079,7 @@ mod tests {
                                             row(
                                                 6,
                                                 vec![
-                                                    icon("com.theinfomoose.rFerram-symbolic", 20),
+                                                    icon("com.theinfomoose.Perigee-symbolic", 20),
                                                     text("Connections").size(16).into(),
                                                 ],
                                             ),

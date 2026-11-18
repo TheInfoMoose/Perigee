@@ -1,0 +1,21 @@
+[package]
+name = "perigee-client"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Remote viewer session pipeline engine, wgpu presenter, and latency feedback control loop for Perigee"
+
+[dependencies]
+anyhow = { workspace = true }
+perigee-channels = { workspace = true }
+perigee-net = { workspace = true }
+perigee-protocol = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+wgpu = { workspace = true }
+
+[dev-dependencies]
+perigee-common = { workspace = true }

@@ -601,7 +601,7 @@ fn paint_container(
             fill_rounded_rect_masked(pixmap, bounds, outer_r, palette.card_bg, mask);
             stroke_rounded_rect_masked(pixmap, bounds, outer_r, 1.5, palette.card_border, mask);
 
-            // Inner second border ("double border" matching rFerramLayout-PNG.drawio.png)
+            // Inner second border ("double border" matching PerigeeLayout-PNG.drawio.png)
             let inner_bounds = inset_rect(bounds, 3.5);
             let inner_r = (outer_r - 3.0).max(4.0);
             stroke_rounded_rect_masked(
@@ -764,7 +764,7 @@ fn resolve_shorthand_icon_name(name_or_label: &str) -> Option<&str> {
         "?" => Some("help-browser-symbolic"),
         "..." => Some("view-more-symbolic"),
         "*" => Some("emblem-favorite-symbolic"),
-        s if s.ends_with("-symbolic") || s.contains("rFerram") || s.contains("rferram") => Some(s),
+        s if s.ends_with("-symbolic") || s.contains("Perigee") || s.contains("perigee") => Some(s),
         _ => None,
     }
 }
@@ -1273,18 +1273,18 @@ fn paint_dropdown(
     }
 }
 
-/// Rasterizes the theme-matched rFerram stained-glass `"rF"` emblem into an RGBA8 [`Pixmap`]
+/// Rasterizes the theme-matched Perigee stained-glass `"rF"` emblem into an RGBA8 [`Pixmap`]
 /// of dimensions `size x size` using the active [`Theme`] palette (never the full-color desktop icon).
 pub fn rasterize_themed_app_icon(size: u32, theme: &Theme) -> Pixmap {
     let safe_size = size.max(16);
     let mut pixmap = Pixmap::new(safe_size, safe_size).expect("icon size is >= 16x16");
     let palette = ThemePalette::from_theme(theme);
     let bounds = Rect::new(0.0, 0.0, safe_size as f32, safe_size as f32);
-    paint_rferram_themed_logo(&mut pixmap, bounds, palette, None);
+    paint_perigee_themed_logo(&mut pixmap, bounds, palette, None);
     pixmap
 }
 
-fn paint_rferram_themed_logo(
+fn paint_perigee_themed_logo(
     pixmap: &mut Pixmap,
     bounds: Rect,
     palette: ThemePalette,
@@ -1382,9 +1382,9 @@ fn paint_rferram_themed_logo(
 }
 
 /// Canonical list of all Freedesktop / COSMIC symbolic icons specified in `UI_Fix.md`
-/// and `rFerramLayout-PNG.drawio.png`.
+/// and `PerigeeLayout-PNG.drawio.png`.
 pub const SYMBOLIC_ICON_NAMES: &[&str] = &[
-    "com.theinfomoose.rFerram-symbolic",
+    "com.theinfomoose.Perigee-symbolic",
     "add-symbolic",
     "view-grid-symbolic",
     "view-list-symbolic",
@@ -1460,8 +1460,8 @@ fn paint_icon(
     palette: &ThemePalette,
     mask: Option<&Mask>,
 ) {
-    if name.contains("rFerram") || name.contains("rferram") {
-        paint_rferram_themed_logo(pixmap, bounds, *palette, mask);
+    if name.contains("Perigee") || name.contains("perigee") {
+        paint_perigee_themed_logo(pixmap, bounds, *palette, mask);
         return;
     }
 
@@ -1700,7 +1700,7 @@ fn paint_icon(
             }
         }
         "user-bookmarks-symbolic" => {
-            // Hierarchical group tree / bookmark nodes matching rFerramLayout-PNG.drawio.png
+            // Hierarchical group tree / bookmark nodes matching PerigeeLayout-PNG.drawio.png
             let node_w = w * 0.24;
             let node_h = h * 0.20;
             let top_node = Rect::new(cx - node_w * 0.5, y + h * 0.12, node_w, node_h);
@@ -1724,7 +1724,7 @@ fn paint_icon(
             }
         }
         "network-vpn-symbolic" => {
-            // VPN tunnel portal bracket + directional arrow/shield matching rFerramLayout-PNG.drawio.png
+            // VPN tunnel portal bracket + directional arrow/shield matching PerigeeLayout-PNG.drawio.png
             let mut pb = PathBuilder::new();
             // Right portal bracket
             pb.move_to(x + w * 0.46, y + h * 0.16);
@@ -1797,7 +1797,7 @@ fn paint_icon(
             }
         }
         "lab-symbolic" | "applications-science-symbolic" => {
-            // Erlenmeyer flask matching Feature Request icon in rFerramLayout-PNG.drawio.png
+            // Erlenmeyer flask matching Feature Request icon in PerigeeLayout-PNG.drawio.png
             let mut pb = PathBuilder::new();
             // Top rim
             pb.move_to(cx - w * 0.16, y + h * 0.14);
@@ -2517,7 +2517,7 @@ mod tests {
 
         let written = draw_text(
             &mut pixmap,
-            "rFerram 192.0.2.10:4433",
+            "Perigee 192.0.2.10:4433",
             4.0,
             6.0,
             14,
@@ -2548,12 +2548,12 @@ mod tests {
     #[test]
     fn test_rasterize_scene_dark_and_light_themes_with_overlays() {
         let tree: Element<'_, RasterTestMsg> = container(
-            "rferram-root-shell",
+            "perigee-root-shell",
             column(
                 10,
                 vec![
                     container(
-                        "rferram-header",
+                        "perigee-header",
                         row(
                             8,
                             vec![
@@ -2564,12 +2564,12 @@ mod tests {
                         ),
                     ),
                     scrollable(container(
-                        "rferram-group-section",
+                        "perigee-group-section",
                         grid(
                             2,
                             12,
                             vec![container(
-                                "rferram-connection-card",
+                                "perigee-connection-card",
                                 column(
                                     6,
                                     vec![
@@ -2683,7 +2683,7 @@ mod tests {
         }
 
         let tree: Element<'_, RasterTestMsg> = container(
-            "rferram-root-shell",
+            "perigee-root-shell",
             column(
                 8,
                 vec![
@@ -2758,7 +2758,7 @@ mod tests {
             assert_eq!(small_boxes.len(), 1);
             assert_eq!((small_boxes[0].width, small_boxes[0].height), (12.0, 12.0));
 
-            if !icon_name.contains("rFerram") {
+            if !icon_name.contains("Perigee") {
                 let mut tiny_canvas = Pixmap::new(24, 24).unwrap();
                 tiny_canvas.fill(bg);
                 paint_icon(

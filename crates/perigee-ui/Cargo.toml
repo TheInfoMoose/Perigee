@@ -1,0 +1,28 @@
+[package]
+name = "perigee-ui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "COSMIC Desktop and cross-platform viewer GUI application for Perigee"
+
+[[bin]]
+name = "perigee-ui"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+cosmic-config = { workspace = true }
+libcosmic = { workspace = true }
+perigee-channels = { workspace = true }
+perigee-client = { workspace = true }
+perigee-common = { workspace = true }
+perigee-net = { workspace = true }
+perigee-protocol = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+wgpu = { workspace = true }

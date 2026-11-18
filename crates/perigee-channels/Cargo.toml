@@ -1,0 +1,16 @@
+[package]
+name = "perigee-channels"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Virtual channels for Perigee sessions: native clipboard synchronization (arboard)"
+
+[dependencies]
+anyhow = { workspace = true }
+arboard = { workspace = true }
+perigee-protocol = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

@@ -1950,6 +1950,121 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "perigee-channels"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "perigee-protocol",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "perigee-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "perigee-channels",
+ "perigee-common",
+ "perigee-net",
+ "perigee-protocol",
+ "tokio",
+ "tracing",
+ "wgpu",
+]
+
+[[package]]
+name = "perigee-common"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek 3.0.0",
+ "hex",
+ "rand",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "simply-transfer-crypto",
+ "thiserror 2.0.21",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
+name = "perigee-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "drm-fourcc",
+ "objc2 0.6.5",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation 0.3.2",
+ "objc2-io-surface",
+ "objc2-metal 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "perigee-channels",
+ "perigee-common",
+ "perigee-net",
+ "perigee-protocol",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
+ "windows",
+ "x11rb",
+ "xkbcommon",
+]
+
+[[package]]
+name = "perigee-net"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "if-addrs",
+ "perigee-common",
+ "perigee-protocol",
+ "quinn",
+ "rcgen",
+ "rustls",
+ "sha2 0.11.0",
+ "socket2",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "perigee-protocol"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "perigee-ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cosmic-config",
+ "libcosmic",
+ "perigee-channels",
+ "perigee-client",
+ "perigee-common",
+ "perigee-net",
+ "perigee-protocol",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wgpu",
+]
+
+[[package]]
 name = "pin-project"
 version = "1.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2321,121 +2436,6 @@ name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
-
-[[package]]
-name = "rferram-channels"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arboard",
- "rferram-protocol",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "rferram-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "rferram-channels",
- "rferram-common",
- "rferram-net",
- "rferram-protocol",
- "tokio",
- "tracing",
- "wgpu",
-]
-
-[[package]]
-name = "rferram-common"
-version = "0.1.0"
-dependencies = [
- "ed25519-dalek 3.0.0",
- "hex",
- "rand",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "simply-transfer-crypto",
- "thiserror 2.0.21",
- "uuid",
- "zeroize",
-]
-
-[[package]]
-name = "rferram-net"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "if-addrs",
- "quinn",
- "rcgen",
- "rferram-common",
- "rferram-protocol",
- "rustls",
- "sha2 0.11.0",
- "socket2",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "rferram-protocol"
-version = "0.1.0"
-dependencies = [
- "postcard",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "rferram-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "drm-fourcc",
- "objc2 0.6.5",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation 0.3.2",
- "objc2-io-surface",
- "objc2-metal 0.3.2",
- "objc2-quartz-core 0.3.2",
- "rferram-channels",
- "rferram-common",
- "rferram-net",
- "rferram-protocol",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "wayland-client",
- "wayland-protocols",
- "wayland-protocols-wlr",
- "windows",
- "x11rb",
- "xkbcommon",
-]
-
-[[package]]
-name = "rferram-ui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cosmic-config",
- "libcosmic",
- "rferram-channels",
- "rferram-client",
- "rferram-common",
- "rferram-net",
- "rferram-protocol",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "wgpu",
-]
 
 [[package]]
 name = "ring"

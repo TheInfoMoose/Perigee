@@ -1478,7 +1478,7 @@ mod tests {
     }
 
     impl Application for RunnerTestApp {
-        const APP_ID: &'static str = "com.theinfomoose.rFerram.RunnerTest";
+        const APP_ID: &'static str = "com.theinfomoose.Perigee.RunnerTest";
         type Executor = ();
         type Flags = &'static str;
         type Message = RunnerTestMsg;
@@ -1568,7 +1568,7 @@ mod tests {
             }
 
             container(
-                "rferram-root-shell",
+                "perigee-root-shell",
                 column(
                     10,
                     vec![
