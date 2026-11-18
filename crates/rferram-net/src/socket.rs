@@ -6,7 +6,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use socket2::{Domain, Protocol, Socket, Type};
 use tracing::{debug, info};
 
@@ -73,65 +73,73 @@ impl VpnSocketFactory {
             .map(|iface| iface.addr.ip())
     }
 
-    /// Constructs a UDP socket explicitly bound to a target VPN network interface
+    /// Constructs a UDP socket explicitly bound to a target VPN network interface.
+    ///
+    /// `InterfaceName` and `SpecificIp` fail closed: if the requested interface or IP cannot be
+    /// bound, an error is returned rather than falling back to `bind_addr`.
     pub fn create_bound_udp_socket(
         bind_addr: SocketAddr,
         interface: &VpnInterfaceBinding,
     ) -> Result<std::net::UdpSocket> {
-        let domain = match bind_addr {
-            SocketAddr::V4(_) => Domain::IPV4,
-            SocketAddr::V6(_) => Domain::IPV6,
+        let new_udp_socket = |addr: SocketAddr| -> Result<Socket> {
+            let domain = match addr {
+                SocketAddr::V4(_) => Domain::IPV4,
+                SocketAddr::V6(_) => Domain::IPV6,
+            };
+            Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))
+                .context("Failed to create socket2 UDP socket")
         };
 
-        let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))
-            .context("Failed to create socket2 UDP socket")?;
-
-        socket.set_reuse_address(true)?;
-        #[cfg(not(windows))]
-        let _ = socket.set_reuse_port(true);
-
-        match interface {
+        let (socket, target_addr) = match interface {
             VpnInterfaceBinding::DefaultSystemRoute => {
                 debug!("Binding QUIC socket to default system route: {}", bind_addr);
+                (new_udp_socket(bind_addr)?, bind_addr)
             }
             VpnInterfaceBinding::SpecificIp(ip) => {
                 let spec_addr = SocketAddr::new(*ip, bind_addr.port());
                 info!("Binding QUIC socket explicitly to target IP: {}", spec_addr);
-                socket.bind(&spec_addr.into())?;
-                socket.set_nonblocking(true)?;
-                return Ok(socket.into());
+                (new_udp_socket(spec_addr)?, spec_addr)
             }
             VpnInterfaceBinding::InterfaceName(if_name) => {
                 info!("Binding QUIC socket to network interface: {}", if_name);
+                let family = if bind_addr.is_ipv4() { "IPv4" } else { "IPv6" };
                 #[cfg(target_os = "linux")]
                 {
-                    if let Err(e) = socket.bind_device(Some(if_name.as_bytes())) {
-                        tracing::warn!(
-                            interface = %if_name,
-                            error = %e,
-                            "SO_BINDTODEVICE requires CAP_NET_RAW or root; falling back to interface IP binding"
-                        );
-                        if let Some(ip) = Self::resolve_interface_ip(if_name, bind_addr.is_ipv4()) {
-                            let spec_addr = SocketAddr::new(ip, bind_addr.port());
-                            socket.bind(&spec_addr.into())?;
-                            socket.set_nonblocking(true)?;
-                            return Ok(socket.into());
+                    let socket = new_udp_socket(bind_addr)?;
+                    match socket.bind_device(Some(if_name.as_bytes())) {
+                        Ok(()) => (socket, bind_addr),
+                        Err(e) => {
+                            tracing::warn!(
+                                interface = %if_name,
+                                error = %e,
+                                "SO_BINDTODEVICE requires CAP_NET_RAW or root; falling back to interface IP binding"
+                            );
+                            let ip = Self::resolve_interface_ip(if_name, bind_addr.is_ipv4())
+                                .ok_or_else(|| {
+                                    anyhow!(
+                                        "interface '{if_name}' not found or has no {family} address; refusing to fall back to {bind_addr}"
+                                    )
+                                })?;
+                            (socket, SocketAddr::new(ip, bind_addr.port()))
                         }
                     }
                 }
                 #[cfg(not(target_os = "linux"))]
                 {
-                    if let Some(ip) = Self::resolve_interface_ip(if_name, bind_addr.is_ipv4()) {
-                        let spec_addr = SocketAddr::new(ip, bind_addr.port());
-                        socket.bind(&spec_addr.into())?;
-                        socket.set_nonblocking(true)?;
-                        return Ok(socket.into());
-                    }
+                    let ip = Self::resolve_interface_ip(if_name, bind_addr.is_ipv4()).ok_or_else(
+                        || {
+                            anyhow!(
+                                "interface '{if_name}' not found or has no {family} address; refusing to fall back to {bind_addr}"
+                            )
+                        },
+                    )?;
+                    let spec_addr = SocketAddr::new(ip, bind_addr.port());
+                    (new_udp_socket(spec_addr)?, spec_addr)
                 }
             }
-        }
+        };
 
-        socket.bind(&bind_addr.into())?;
+        socket.bind(&target_addr.into())?;
         socket.set_nonblocking(true)?;
 
         Ok(socket.into())
@@ -201,13 +209,59 @@ mod tests {
         assert_ne!(local_specific.port(), 0);
 
         // 3. InterfaceName binding (exercises Linux SO_BINDTODEVICE + unprivileged IP fallback)
-        let iface_sock = VpnSocketFactory::create_bound_udp_socket(
+        #[cfg(target_os = "linux")]
+        {
+            let iface_sock = VpnSocketFactory::create_bound_udp_socket(
+                bind_addr,
+                &VpnInterfaceBinding::InterfaceName("lo".to_string()),
+            )
+            .expect("Failed to create UDP socket with InterfaceName fallback");
+            let local_iface = iface_sock.local_addr().unwrap();
+            assert_eq!(local_iface.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+            assert_ne!(local_iface.port(), 0);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let iface_sock = VpnSocketFactory::create_bound_udp_socket(
+                bind_addr,
+                &VpnInterfaceBinding::InterfaceName("lo0".to_string()),
+            )
+            .expect("Failed to create UDP socket with InterfaceName fallback");
+            let local_iface = iface_sock.local_addr().unwrap();
+            assert_eq!(local_iface.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+            assert_ne!(local_iface.port(), 0);
+        }
+    }
+
+    #[test]
+    fn test_missing_interface_fails_closed() {
+        let bind_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let res = VpnSocketFactory::create_bound_udp_socket(
             bind_addr,
-            &VpnInterfaceBinding::InterfaceName("lo".to_string()),
+            &VpnInterfaceBinding::InterfaceName("rferram-missing0".into()),
+        );
+        assert!(res.is_err());
+        let err_msg = res.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("refusing to fall back"),
+            "Expected error message to contain 'refusing to fall back', got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_port_is_not_shared() {
+        let bind_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let first_sock = VpnSocketFactory::create_bound_udp_socket(
+            bind_addr,
+            &VpnInterfaceBinding::DefaultSystemRoute,
         )
-        .expect("Failed to create UDP socket with InterfaceName fallback");
-        let local_iface = iface_sock.local_addr().unwrap();
-        assert_eq!(local_iface.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
-        assert_ne!(local_iface.port(), 0);
+        .expect("First DefaultSystemRoute bind should succeed");
+        let port = first_sock.local_addr().unwrap().port();
+        let same_port_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+        let second_res = VpnSocketFactory::create_bound_udp_socket(
+            same_port_addr,
+            &VpnInterfaceBinding::DefaultSystemRoute,
+        );
+        assert!(second_res.is_err());
     }
 }
