@@ -20,7 +20,7 @@ edition = "2024"
 authors = ["TheInfoMoose"]
 license = "GPL-3.0-only"
 rust-version = "1.93"
-repository = "https://github.com/TheInfoMoose/rFerram"
+repository = "https://github.com/TheInfoMoose/Perigee"
 
 [workspace.dependencies]
 # Internal Workspace Crates
