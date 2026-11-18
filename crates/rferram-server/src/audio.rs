@@ -1,7 +1,6 @@
-//! Host System Audio Loopback Capture Engine (PipeWire / WASAPI / macOS CoreAudio).
+//! Host audio frame emission stand-in.
 //!
-//! Captures 48 kHz stereo host speaker audio in 20 ms (50 Hz) Opus frames and streams
-//! [`WireMessage::Audio`] frames to connected remote viewers.
+//! Status: stand-in. `HostAudioCapturer` emits zero-filled 192-byte buffers every 20 ms with no OS audio loopback capture or codec; Phase 5 replaces or defers it.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,26 +14,26 @@ use rferram_protocol::{AudioCodec, AudioDirection, AudioFrameMessage, WireMessag
 
 use crate::CaptureBackendType;
 
-/// Opus audio loopback frame interval in milliseconds (50 Hz).
+/// Audio frame interval in milliseconds (50 Hz).
 pub const OPUS_FRAME_INTERVAL_MS: u64 = 20;
 
-/// Standard Opus audio sample rate (48 kHz).
+/// Audio sample rate constant (48 kHz).
 pub const OPUS_SAMPLE_RATE_HZ: u32 = 48_000;
 
 /// Standard stereo channel count.
 pub const OPUS_CHANNELS: u8 = 2;
 
-/// Encoded 20 ms stereo Opus payload size in bytes.
+/// Stand-in 20 ms audio payload size in bytes.
 pub const OPUS_PAYLOAD_BYTES: usize = 192;
 
-/// Host System Audio Capture Loopback Engine (PipeWire / WASAPI / macOS CoreAudio)
+/// Stand-in host audio emitter that sends zero-filled frames on a 20 ms timer.
 pub struct HostAudioCapturer {
     pub backend: CaptureBackendType,
     pub is_running: Arc<AtomicBool>,
 }
 
 impl HostAudioCapturer {
-    /// Creates a new [`HostAudioCapturer`] bound to the given display/OS backend.
+    /// Creates a new [`HostAudioCapturer`] recording the selected [`CaptureBackendType`].
     pub fn new(backend: CaptureBackendType) -> Self {
         Self {
             backend,
@@ -42,12 +41,12 @@ impl HostAudioCapturer {
         }
     }
 
-    /// Returns `true` if the audio loopback capture task is currently running.
+    /// Returns `true` if the periodic audio frame emission task is currently running.
     pub fn is_capturing(&self) -> bool {
         self.is_running.load(Ordering::SeqCst)
     }
 
-    /// Constructs a 20 ms 48 kHz stereo Opus [`AudioFrameMessage`] for host loopback streaming.
+    /// Constructs a zero-filled 192-byte [`AudioFrameMessage`] tagged with [`AudioCodec::Opus`].
     pub fn build_audio_frame(stream_id: u32, timestamp_us: u64) -> AudioFrameMessage {
         AudioFrameMessage {
             stream_id,
@@ -60,7 +59,7 @@ impl HostAudioCapturer {
         }
     }
 
-    /// Starts the asynchronous 50 Hz (20 ms) Opus audio loopback capture loop.
+    /// Starts the asynchronous 50 Hz (20 ms) stand-in audio emission loop.
     pub async fn start_loopback_capture(&self, tx: mpsc::Sender<WireMessage>) -> Result<()> {
         self.is_running.store(true, Ordering::SeqCst);
         let is_running = self.is_running.clone();

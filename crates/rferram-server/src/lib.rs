@@ -1,15 +1,9 @@
-//! `rferram-server`: Elevated Remote Host Capture Engine & System Daemon
+//! `rferram-server`: Remote Host Capture, Encoding, Input & Daemon Crate.
 //!
-//! Provides zero-copy GPU frame capture across operating systems:
-//! - Wayland DMABUF / PipeWire / COSMIC Compositor via Smithay & Wayland protocols (Linux: Debian, RHEL, SUSE, Arch)
-//! - Windows DXGI Desktop Duplication API (Windows)
-//! - ScreenCaptureKit zero-copy Metal GPU capture & VideoToolbox HW encoding (macOS)
-//! - X11 SHM / XFIXES legacy fallback
+//! Status: stand-in. Frame capture, video encoding, audio capture, and Linux input injection are stand-ins that emit synthetic buffers or log events; Phase 5 replaces them with real media and input backends.
 //!
-//! Handles hardware video encoding (AV1 via hardware/rav1e, H.265, H.264, Apple VideoToolbox),
-//! native OS input injection (Wayland virtual pointer/keys, Windows SendInput, macOS CGEvent),
-//! duplex audio loopback capture (PipeWire, WASAPI, macOS CoreAudio),
-//! and elevated daemon session orchestration (`systemd`, Windows Service, macOS `launchd`).
+//! Coordinates host session management (`daemon`, `host`), platform capture and input traits
+//! (`backends`), video frame packaging (`encoder`), and periodic audio frame emission (`audio`).
 
 use anyhow::Result;
 
@@ -66,13 +60,13 @@ pub use host::{run_host, shutdown_signal};
 /// Operating System Display & Frame Capture Backend
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureBackendType {
-    /// Wayland DMABUF / PipeWire capture managed via Smithay / COSMIC backend (Linux)
+    /// Linux Wayland capture backend selector
     WaylandPipeWire,
-    /// Windows DXGI Desktop Duplication API (Windows)
+    /// Windows DXGI Desktop Duplication backend selector
     WindowsDxgi,
-    /// macOS ScreenCaptureKit zero-copy frame capture (macOS 12.3+)
+    /// macOS ScreenCaptureKit backend selector
     MacOsScreenCaptureKit,
-    /// X11 SHM / XFIXES fallback (Legacy Linux)
+    /// Linux X11 SHM backend selector
     X11Fallback,
 }
 

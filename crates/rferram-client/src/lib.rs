@@ -1,9 +1,10 @@
-//! `rferram-client`: Remote Viewer Session Pipeline Engine (v2 - Cross-Platform including macOS, Windows & Linux/COSMIC)
+//! `rferram-client`: Remote Viewer Session Pipeline Crate.
 //!
-//! Coordinates QUIC stream demuxing, video frame decoding (`wgpu 30.0.1` Metal / Vulkan / DirectX 12),
-//! audio output playback (`cpal` / CoreAudio / WASAPI / PipeWire), native peripheral input capture,
-//! dynamic feedback control loops (RTT, sequence loss & FPS monitoring), and virtual channels
-//! (Clipboard & ST v2 APFS/VSS/Linux snapshots).
+//! Status: stand-in. Video decoding, `wgpu` rendering, and audio device playback are stand-ins (wire payloads are forwarded undecoded, `render` only computes texture layouts, and `audio` only buffers frames in memory); Phase 5 replaces them.
+//!
+//! Coordinates QUIC stream demuxing (`bridge`, `session`), texture plane layout validation
+//! (`render`), in-memory audio frame buffering (`audio`), input event forwarding, and
+//! sequence-loss feedback (`LossReport`, `FrameAck`).
 
 pub mod audio;
 pub mod bridge;

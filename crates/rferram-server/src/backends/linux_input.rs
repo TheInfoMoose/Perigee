@@ -1,8 +1,6 @@
-//! Linux Wayland virtual pointer/keyboard (`zwlr_virtual_pointer_manager_v1` / `xkbcommon`)
-//! and X11 `XTest` (`x11rb::protocol::xtest`) input injection handlers.
+//! Linux Wayland and X11 coordinate/keycode translation helpers and stand-in input injectors.
 //!
-//! Designed for COSMIC (`cosmic-comp` / Smithay), wlroots compositors, and legacy X11 servers,
-//! with deterministic fallback when executing inside headless CI environments.
+//! Status: stand-in. `WaylandVirtualInputInjector` and `X11XTestInputInjector` translate coordinates and keycodes into in-memory state and log `debug!` messages without injecting OS input; Phase 5 replaces them.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -418,7 +416,7 @@ pub fn mouse_button_to_x11_detail(button: MouseButtonCode) -> u8 {
     }
 }
 
-/// Wayland Virtual Pointer & Keyboard Input Injector (`zwlr_virtual_pointer_manager_v1` & `xkbcommon`).
+/// Stand-in Wayland virtual pointer and keyboard input injector (`zwlr_virtual_pointer_manager_v1` & `xkbcommon`).
 pub struct WaylandVirtualInputInjector {
     screen_width: u32,
     screen_height: u32,
@@ -432,9 +430,8 @@ pub struct WaylandVirtualInputInjector {
 }
 
 impl WaylandVirtualInputInjector {
-    /// Initializes the Wayland virtual pointer/keyboard input injector for the given display dimensions.
-    /// Probes the ambient Wayland socket and `xkbcommon` context on Linux, falling back cleanly
-    /// in headless CI environments.
+    /// Initializes the stand-in Wayland virtual pointer/keyboard input injector for the given display dimensions,
+    /// probing the ambient Wayland socket and `xkbcommon` context on Linux.
     pub fn new(screen_width: u32, screen_height: u32) -> Result<Self> {
         let initial_coords =
             normalize_pointer_coordinates(0.5, 0.5, true, screen_width, screen_height)?;
@@ -699,7 +696,7 @@ impl HostInputInjector for WaylandVirtualInputInjector {
     }
 }
 
-/// Legacy X11 `XTest` Input Injector (`x11rb::protocol::xtest`).
+/// Stand-in X11 `XTest` input injector (`x11rb::protocol::xtest`).
 pub struct X11XTestInputInjector {
     screen_width: u32,
     screen_height: u32,
@@ -711,8 +708,8 @@ pub struct X11XTestInputInjector {
 }
 
 impl X11XTestInputInjector {
-    /// Initializes the X11 `XTest` input injector, probing `x11rb::connect(None)` and
-    /// `xtest_get_version(2, 2)` on Linux, with deterministic headless CI fallback.
+    /// Initializes the stand-in X11 `XTest` input injector, probing `x11rb::connect(None)` and
+    /// `xtest_get_version(2, 2)` on Linux.
     pub fn new(fallback_width: u32, fallback_height: u32) -> Result<Self> {
         if fallback_width == 0 || fallback_height == 0 {
             bail!(
@@ -990,7 +987,7 @@ pub enum LinuxInputController {
 impl LinuxInputController {
     /// Creates a new [`LinuxInputController`] for the specified [`CaptureBackendType`].
     /// Selects [`X11XTestInputInjector`] for [`CaptureBackendType::X11Fallback`] and
-    /// [`WaylandVirtualInputInjector`] for Wayland/PipeWire backends.
+    /// [`WaylandVirtualInputInjector`] for Wayland backends.
     pub fn new(backend: CaptureBackendType, width: u32, height: u32) -> Result<Self> {
         match backend {
             CaptureBackendType::X11Fallback => {

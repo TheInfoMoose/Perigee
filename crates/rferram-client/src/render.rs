@@ -1,4 +1,6 @@
-//! `wgpu` (`30.0.1`) Zero-Copy Texture Render Pipeline, Layout Calculators & WGSL Video Surface Shader.
+//! `wgpu` (`30.0.1`) texture layout calculator and WGSL video surface shader validator.
+//!
+//! Status: stand-in. `WgpuRenderPipeline` validates WGSL source and computes CPU-side texture layouts; no `wgpu` device, surface, or draw call exists outside tests, and Phase 5 replaces it.
 //!
 //! Provides cross-platform texture plane layout calculations (`NV12`, `YUV420P`, `YUV444P`, `Rgba8`,
 //! `Bgra8`), `wgpu::COPY_BYTES_PER_ROW_ALIGNMENT` (`256`-byte) row stride padding, buffer bounds
@@ -9,7 +11,7 @@ use std::borrow::Cow;
 use anyhow::{Result, bail, ensure};
 use rferram_protocol::PixelFormat;
 
-/// Built-in WGSL Shader for Zero-Copy BGRA8 / NV12 Frame Presentation on Vulkan, Metal, and DX12.
+/// Built-in WGSL shader for single-plane 2D texture presentation on Vulkan, Metal, and DX12.
 pub const VIDEO_SURFACE_SHADER_WGSL: &str = r#"
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -213,7 +215,7 @@ impl TextureSurfaceLayout {
     }
 }
 
-/// `wgpu` (`30.0.1`) Zero-Copy Texture Render Pipeline descriptor and layout calculator.
+/// `wgpu` (`30.0.1`) texture descriptor and layout calculator (stand-in; holds no GPU handles).
 #[derive(Debug, Clone)]
 pub struct WgpuRenderPipeline {
     pub width: u32,

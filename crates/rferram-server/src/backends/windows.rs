@@ -1,12 +1,13 @@
-//! Windows `DXGI Desktop Duplication` (`IDXGIOutputDuplication` / `ID3D11Texture2D`) zero-copy
-//! GPU frame capture and Win32 `SendInput` (`INPUT_MOUSE` / `INPUT_KEYBOARD`) native input
-//! injection backend.
+//! Windows `DXGI Desktop Duplication` (`IDXGIOutputDuplication` / `ID3D11Texture2D`) frame capture stand-in
+//! and Win32 `SendInput` (`INPUT_MOUSE` / `INPUT_KEYBOARD`) input injection backend.
+//!
+//! Status: stand-in. `WindowsDxgiCapturer` probes DXGI output dimensions and returns a constant-filled 64 KiB buffer (Phase 5 replaces it); `WindowsSendInputInjector` calls Win32 `SendInput` on Windows but uses pixel coordinates and a partial 19-entry scancode map.
 //!
 //! Uses the locked `windows = "0.62.2"` crate (`Win32_Foundation`, `Win32_Graphics_Dxgi`,
 //! `Win32_Graphics_Dxgi_Common`, `Win32_Graphics_Direct3D11`,
 //! `Win32_UI_Input_KeyboardAndMouse`) under `#[cfg(target_os = "windows")]` while providing
-//! deterministic cross-platform surface validation, `0..=65535` absolute coordinate normalization,
-//! virtual-key/scancode translation, and headless CI fallback on all host targets.
+//! cross-platform surface layout validation, `0..=65535` absolute coordinate normalization,
+//! and virtual-key/scancode translation on all host targets.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
@@ -116,7 +117,7 @@ pub struct DxgiSubresourceLayout {
     pub offset: u32,
 }
 
-/// Zero-copy / staging Windows `IDXGIOutputDuplication` (`ID3D11Texture2D`) surface descriptor.
+/// Staging Windows `IDXGIOutputDuplication` (`ID3D11Texture2D`) surface descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowsDxgiSurfaceDescriptor {
     /// Zero-based DXGI output index (`IDXGIAdapter1::EnumOutputs`).
@@ -331,7 +332,7 @@ struct DxgiProbeOutcome {
     interfaces_probed: (&'static str, &'static str),
 }
 
-/// Windows `DXGI Desktop Duplication` (`IDXGIOutputDuplication` + `ID3D11Device`) GPU frame capturer.
+/// Stand-in Windows `DXGI Desktop Duplication` (`IDXGIOutputDuplication` + `ID3D11Device`) frame capturer.
 pub struct WindowsDxgiCapturer {
     display_id: u32,
     origin_x: i32,
@@ -346,9 +347,9 @@ pub struct WindowsDxgiCapturer {
 }
 
 impl WindowsDxgiCapturer {
-    /// Initializes the Windows DXGI Desktop Duplication capturer, probing `CreateDXGIFactory1` /
-    /// `IDXGIAdapter1` / `IDXGIOutput1::DuplicateOutput` on Windows or falling back cleanly to a
-    /// synthetic `D3D11Texture2D` surface in headless/non-Windows CI environments.
+    /// Initializes the stand-in Windows DXGI capturer, probing `CreateDXGIFactory1` /
+    /// `IDXGIAdapter1` / `IDXGIOutput1::DuplicateOutput` on Windows and constructing a
+    /// [`WindowsDxgiSurfaceDescriptor`] for the detected or requested dimensions.
     pub fn new(display_id: u32, fallback_width: u32, fallback_height: u32) -> Result<Self> {
         if fallback_width == 0 || fallback_height == 0 {
             bail!(

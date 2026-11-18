@@ -1,11 +1,12 @@
-//! macOS `ScreenCaptureKit` zero-copy `IOSurface` / `Metal` GPU frame capture
-//! and `CoreGraphics` (`CGEvent`) native input injection backend.
+//! macOS `ScreenCaptureKit` `IOSurface` / `Metal` frame capture stand-in
+//! and `CoreGraphics` (`CGEvent`) input injection backend.
+//!
+//! Status: stand-in. `MacOsScreenCaptureKitCapturer` probes `SCShareableContent`/`SCStream` and returns a constant-filled 64 KiB buffer (Phase 5 replaces it); `MacOsCgEventInjector` calls `CGEventPost` on macOS but uses pixel coordinates and a partial 12-entry scancode map.
 //!
 //! Uses the locked `objc2` ecosystem (`objc2`, `objc2-core-foundation`,
 //! `objc2-core-graphics`, `objc2-foundation`, `objc2-io-surface`, `objc2-metal`,
 //! `objc2-quartz-core`) under `#[cfg(target_os = "macos")]` while providing
-//! deterministic cross-platform surface validation, coordinate/keycode translation,
-//! and headless CI fallback on all host targets.
+//! cross-platform surface layout validation and coordinate/keycode translation on all host targets.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
@@ -72,7 +73,7 @@ pub struct IoSurfacePlaneDescriptor {
     pub offset: u32,
 }
 
-/// Zero-copy macOS `IOSurface` / `MTLTexture` surface descriptor exported by `ScreenCaptureKit`.
+/// macOS `IOSurface` / `MTLTexture` surface descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MacOsIoSurfaceDescriptor {
     /// Kernel-global `IOSurfaceID` (`uint32_t`) suitable for Mach port / Metal texture binding.
@@ -85,7 +86,7 @@ pub struct MacOsIoSurfaceDescriptor {
     pub os_type: u32,
     /// Mapped rFerram wire [`PixelFormat`].
     pub pixel_format: PixelFormat,
-    /// Indicates whether the surface is backed by a zero-copy `MTLTexture` (`objc2-metal`).
+    /// Indicates whether the surface descriptor is marked compatible with `MTLTexture` (`objc2-metal`).
     pub metal_texture_compatible: bool,
     /// Per-plane layout descriptors (`IOSurfaceGetPlaneCount`).
     pub planes: Vec<IoSurfacePlaneDescriptor>,
@@ -207,7 +208,7 @@ impl MacOsIoSurfaceDescriptor {
     }
 }
 
-/// macOS `ScreenCaptureKit` (`SCStream` / `SCShareableContent`) zero-copy `IOSurface` / `Metal` frame capturer.
+/// Stand-in macOS `ScreenCaptureKit` (`SCStream` / `SCShareableContent`) `IOSurface` frame capturer.
 pub struct MacOsScreenCaptureKitCapturer {
     display_id: u32,
     iosurface: MacOsIoSurfaceDescriptor,
@@ -220,9 +221,9 @@ pub struct MacOsScreenCaptureKitCapturer {
 }
 
 impl MacOsScreenCaptureKitCapturer {
-    /// Initializes the macOS `ScreenCaptureKit` frame capturer, probing `SCShareableContent` / `SCStream`
-    /// and `CoreGraphics` display metrics on macOS, or falling back cleanly to a synthetic `IOSurface`
-    /// in headless/non-macOS CI environments.
+    /// Initializes the stand-in macOS `ScreenCaptureKit` capturer, probing `SCShareableContent` / `SCStream`
+    /// and `CoreGraphics` display metrics on macOS and constructing a [`MacOsIoSurfaceDescriptor`]
+    /// for the detected or requested dimensions.
     pub fn new(display_id: u32, fallback_width: u32, fallback_height: u32) -> Result<Self> {
         if fallback_width == 0 || fallback_height == 0 {
             bail!(

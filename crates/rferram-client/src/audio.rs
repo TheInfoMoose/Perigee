@@ -1,9 +1,10 @@
-//! Client Duplex Audio Frame Jitter Buffer & Microphone Passthrough Engine.
+//! Client in-memory audio frame queue (`ClientAudioBuffer`) and microphone frame builder.
 //!
-//! Provides bounded low-latency speaker playback buffering (`ClientAudioBuffer`) for incoming
-//! 20 ms 48 kHz stereo `AudioDirection::HostToClientSpeaker` frames (Opus or PCM16LE) with
-//! overflow eviction, underrun telemetry (`AudioBufferStats`), and client microphone frame
-//! packaging (`AudioDirection::ClientToHostMicrophone`).
+//! Status: stand-in. `ClientAudioBuffer` is an in-memory `VecDeque<AudioFrameMessage>` with no audio codec or OS audio output/input stream, and buffered frames are not drained outside tests; Phase 5 replaces or defers it.
+//!
+//! Provides bounded queueing for incoming `AudioDirection::HostToClientSpeaker` frames with
+//! overflow eviction, underrun counters (`AudioBufferStats`), and client microphone frame
+//! struct construction (`AudioDirection::ClientToHostMicrophone`).
 
 use std::collections::VecDeque;
 
@@ -13,13 +14,13 @@ use rferram_protocol::{AudioCodec, AudioDirection, AudioFrameMessage};
 /// Default client audio jitter buffer capacity in frames (32 frames = 640 ms at 20 ms/frame).
 pub const DEFAULT_AUDIO_JITTER_CAPACITY: usize = 32;
 
-/// Standard 48 kHz audio sample rate used across rFerram Opus and PCM streams.
+/// Standard 48 kHz audio sample rate constant for audio frame messages.
 pub const DEFAULT_AUDIO_SAMPLE_RATE_HZ: u32 = 48_000;
 
 /// Standard stereo channel count.
 pub const DEFAULT_AUDIO_CHANNELS: u8 = 2;
 
-/// Standard 20 ms stereo Opus encoded payload size in bytes.
+/// Default 20 ms stereo audio frame payload size in bytes.
 pub const DEFAULT_OPUS_FRAME_BYTES: usize = 192;
 
 /// Telemetry counters tracked by [`ClientAudioBuffer`] during an active remote session.

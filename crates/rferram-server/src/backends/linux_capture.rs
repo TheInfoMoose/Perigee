@@ -1,8 +1,6 @@
-//! Linux Wayland DMABUF/GBM zero-copy capture and X11 SHM/GetImage fallback capture structures.
+//! Linux Wayland and X11 frame capture surface descriptors and stand-in capturers.
 //!
-//! Designed for COSMIC (`cosmic-comp` / Smithay), wlroots (`zwlr_screencopy_manager_v1`),
-//! standard `zwp_linux_dmabuf_v1` compositors, and legacy X11 (`MIT-SHM` / `RandR`) servers,
-//! with deterministic fallback when executing inside headless CI environments.
+//! Status: stand-in. The Wayland and X11 capturers probe the display server and return a constant-filled 64 KiB buffer; no pixels are read. Phase 5 replaces this with headless virtual-output capture.
 
 use std::time::Instant;
 
@@ -69,14 +67,14 @@ pub trait FrameCapturer: Send + Sync {
     /// Returns the active [`CaptureBackendType`] for this capturer.
     fn backend_type(&self) -> CaptureBackendType;
 
-    /// Returns `true` if connected to a live OS compositor/display server,
-    /// or `false` when operating in headless CI fallback mode.
+    /// Returns `true` if the initial display probe detected a running display server,
+    /// or `false` if the probe did not find one.
     fn is_live_display(&self) -> bool;
 
     /// Enumerates the display monitors visible to this capture backend.
     fn enumerate_monitors(&self) -> Result<Vec<MonitorInfo>>;
 
-    /// Captures the next display frame from the GPU DMA-BUF surface or SHM buffer.
+    /// Returns the next [`CapturedFrame`] from this capture backend.
     fn capture_next_frame(&mut self) -> Result<CapturedFrame>;
 }
 
@@ -181,7 +179,7 @@ impl GbmDmabufSurface {
     }
 }
 
-/// Wayland DMABUF / GBM Frame Capturer (`COSMIC`, `Smithay`, `zwp_linux_dmabuf_v1`, `zwlr_screencopy_manager_v1`).
+/// Stand-in Wayland frame capturer (probes `wayland_client::Connection::connect_to_env()` and returns a constant-filled 64 KiB buffer).
 pub struct WaylandDmabufCapturer {
     display_id: u32,
     surface: GbmDmabufSurface,
@@ -193,8 +191,8 @@ pub struct WaylandDmabufCapturer {
 }
 
 impl WaylandDmabufCapturer {
-    /// Initializes the Wayland DMABUF/GBM frame capturer, probing the ambient Wayland socket on Linux
-    /// and falling back cleanly to a synthetic DMA-BUF surface in headless CI environments.
+    /// Initializes the stand-in Wayland capturer, probing whether an ambient Wayland socket is reachable
+    /// and constructing a [`GbmDmabufSurface`] descriptor for the requested dimensions.
     pub fn new(display_id: u32, width: u32, height: u32) -> Result<Self> {
         let surface = GbmDmabufSurface::new_linear_xrgb8888(width, height)?;
         let (live_wayland_connected, wayland_protocols_supported) =
@@ -302,7 +300,7 @@ impl FrameCapturer for WaylandDmabufCapturer {
     }
 }
 
-/// Legacy X11 `MIT-SHM` / `GetImage` Fallback Frame Capturer.
+/// Stand-in X11 frame capturer (probes `x11rb::connect(None)` and returns a constant-filled 64 KiB buffer).
 pub struct X11ShmCapturer {
     display_id: u32,
     width: u32,
@@ -314,8 +312,8 @@ pub struct X11ShmCapturer {
 }
 
 impl X11ShmCapturer {
-    /// Initializes the X11 SHM fallback capturer, probing `x11rb::connect(None)` on Linux
-    /// and falling back cleanly to synthetic SHM buffers in headless CI environments.
+    /// Initializes the stand-in X11 capturer, probing `x11rb::connect(None)` on Linux
+    /// and recording the detected or requested dimensions.
     pub fn new(display_id: u32, fallback_width: u32, fallback_height: u32) -> Result<Self> {
         if fallback_width == 0 || fallback_height == 0 {
             bail!(

@@ -1,4 +1,6 @@
-//! Hardware and software video encoder abstractions and implementations (`AV1`, `H.265`, `H.264`, Apple `VideoToolbox`).
+//! Video encoder trait and stand-in implementations.
+//!
+//! Status: stand-in. `SoftwareVideoEncoder` and `MacOsVideoToolboxEncoder` copy the first 1–2 KiB of the frame; no codec runs, and Phase 5 replaces them.
 
 use anyhow::Result;
 use tracing::{debug, info};
@@ -7,7 +9,7 @@ use rferram_protocol::{VideoCodec, VideoFrameMessage};
 
 use crate::CapturedFrame;
 
-/// Hardware / Software Encoder Configuration
+/// Video Encoder Configuration
 #[derive(Debug, Clone)]
 pub struct EncoderConfig {
     pub codec: VideoCodec,
@@ -33,14 +35,14 @@ impl Default for EncoderConfig {
     }
 }
 
-/// Abstraction interface for Hardware-Accelerated Video Encoders (NVENC, VAAPI, Apple VideoToolbox, QuickSync, rav1e)
+/// Trait for video frame encoders (currently implemented by stand-ins that slice raw frame bytes).
 pub trait VideoEncoder: Send + Sync {
     fn encode(&mut self, frame: &CapturedFrame, force_keyframe: bool) -> Result<VideoFrameMessage>;
     fn update_bitrate(&mut self, target_bitrate_kbps: u32) -> Result<()>;
     fn update_framerate(&mut self, target_fps: u32) -> Result<()>;
 }
 
-/// macOS Apple Silicon / VideoToolbox Hardware Accelerated Video Encoder
+/// Stand-in macOS video encoder (slices up to 2048 bytes of `frame.data` without compression).
 pub struct MacOsVideoToolboxEncoder {
     config: EncoderConfig,
     frame_counter: u64,
@@ -116,7 +118,7 @@ impl VideoEncoder for MacOsVideoToolboxEncoder {
     }
 }
 
-/// General Hardware/AV1 Fallback Video Encoder
+/// Stand-in software video encoder (slices up to 1024 bytes of `frame.data` without compression).
 pub struct SoftwareVideoEncoder {
     config: EncoderConfig,
     frame_counter: u64,
