@@ -205,7 +205,8 @@ mod tests {
             "test-session".to_string(),
             CaptureBackendType::WaylandPipeWire,
             EncoderConfig::default(),
-        );
+        )
+        .expect("HostSessionEngine::new should succeed");
         session.force_keyframe_flag.store(false, Ordering::SeqCst);
         session
             .handle_incoming_wire_message(WireMessage::Control(ControlMessage::LossReport {
@@ -350,10 +351,12 @@ mod tests {
         let session_id_1 = daemon.handle_handshake(hello).await.unwrap();
         let session_1 = daemon
             .provision_session(session_id_1.clone(), EncoderConfig::default())
-            .await;
+            .await
+            .expect("provision_session should succeed");
         let session_2 = daemon
             .provision_session("session-2".to_string(), EncoderConfig::default())
-            .await;
+            .await
+            .expect("provision_session should succeed");
 
         assert_eq!(daemon.active_session_count().await, 2);
         assert!(session_1.is_running());

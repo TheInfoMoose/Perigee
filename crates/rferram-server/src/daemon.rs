@@ -17,8 +17,7 @@ use rferram_channels::VirtualChannelManager;
 use rferram_common::{NistVault, RuntimeEnvironment};
 use rferram_net::QuicConnectionManager;
 use rferram_protocol::{
-    AuthMethod, ControlMessage, HandshakeMessage, PixelFormat, VideoCodec, WireMessage,
-    decode_length_prefixed,
+    AuthMethod, ControlMessage, HandshakeMessage, VideoCodec, WireMessage, decode_length_prefixed,
 };
 
 use crate::audio::HostAudioCapturer;
@@ -26,7 +25,7 @@ use crate::backends::{
     FrameCapturer, LinuxCaptureController, MacOsScreenCaptureKitCapturer, WindowsDxgiCapturer,
 };
 use crate::encoder::{EncoderConfig, MacOsVideoToolboxEncoder, SoftwareVideoEncoder, VideoEncoder};
-use crate::{CaptureBackendType, CapturedFrame, HostInputInjector, NativeInputInjector};
+use crate::{CaptureBackendType, HostInputInjector, NativeInputInjector};
 
 /// Minimum byte length for an `AuthMethod::Ed25519Signature` credential payload:
 /// `[verifying_key: 32][tls_cert_sha256: 32][signature: 64][challenge: >= 1]`.
@@ -44,7 +43,7 @@ pub struct HostSessionEngine {
     pub force_keyframe_flag: Arc<AtomicBool>,
     pub last_acked_frame_id: Arc<AtomicU64>,
     pub is_active: Arc<AtomicBool>,
-    stop_tx: watch::Sender<bool>,
+    stop_tx: Arc<watch::Sender<bool>>,
 }
 
 impl HostSessionEngine {
@@ -75,21 +74,11 @@ impl HostSessionEngine {
         session_id: String,
         backend_type: CaptureBackendType,
         encoder_config: EncoderConfig,
-    ) -> Self {
+    ) -> Result<Self> {
         let width = encoder_config.width.max(1);
         let height = encoder_config.height.max(1);
-        let capturer =
-            Self::build_frame_capturer(backend_type, 1, width, height).unwrap_or_else(|_| {
-                Box::new(
-                    LinuxCaptureController::new(
-                        CaptureBackendType::WaylandPipeWire,
-                        1,
-                        width,
-                        height,
-                    )
-                    .expect("Fallback WaylandDmabufCapturer initialization must succeed"),
-                )
-            });
+        let capturer = Self::build_frame_capturer(backend_type, 1, width, height)
+            .context("failed to start the frame capturer for this session")?;
 
         let encoder: Box<dyn VideoEncoder> = match backend_type {
             CaptureBackendType::MacOsScreenCaptureKit => {
@@ -101,7 +90,7 @@ impl HostSessionEngine {
         let input_injector = Arc::new(NativeInputInjector::new(backend_type));
         let (stop_tx, _) = watch::channel(false);
 
-        Self {
+        Ok(Self {
             session_id,
             backend_type,
             capturer: Arc::new(Mutex::new(capturer)),
@@ -112,8 +101,8 @@ impl HostSessionEngine {
             force_keyframe_flag: Arc::new(AtomicBool::new(true)),
             last_acked_frame_id: Arc::new(AtomicU64::new(0)),
             is_active: Arc::new(AtomicBool::new(true)),
-            stop_tx,
-        }
+            stop_tx: Arc::new(stop_tx),
+        })
     }
 
     /// Returns `true` if the session capture engine is currently active.
@@ -134,42 +123,34 @@ impl HostSessionEngine {
             "Starting host frame capture loop"
         );
 
+        let session_id = self.session_id.clone();
         let is_active = self.is_active.clone();
+        let stop_tx = self.stop_tx.clone();
         let mut stop_rx = self.subscribe_stop();
         let capturer = self.capturer.clone();
         let encoder = self.encoder.clone();
         let force_keyframe = self.force_keyframe_flag.clone();
         let video_tx = outgoing_tx.clone();
-        let start_time = Instant::now();
-        let mut frame_count: u64 = 0;
 
         tokio::spawn(async move {
             let target_frame_duration = Duration::from_nanos(1_000_000_000 / 60);
 
             while is_active.load(Ordering::Relaxed) && !*stop_rx.borrow() {
                 let loop_start = Instant::now();
-                frame_count += 1;
 
                 let captured_frame = {
                     let mut cap_lock = capturer.lock().await;
                     match cap_lock.capture_next_frame() {
                         Ok(frame) => frame,
                         Err(e) => {
-                            warn!(
+                            error!(
+                                session_id = %session_id,
                                 error = %e,
-                                "Platform FrameCapturer capture_next_frame failed; using fallback frame"
+                                "Platform FrameCapturer capture_next_frame failed; stopping session"
                             );
-                            CapturedFrame {
-                                frame_index: frame_count,
-                                timestamp_us: start_time.elapsed().as_micros() as u64,
-                                display_id: 1,
-                                width: 2560,
-                                height: 1440,
-                                stride: 2560 * 4,
-                                pixel_format: PixelFormat::Bgra8,
-                                data: vec![128u8; 64 * 1024],
-                                is_dmabuf_or_metal_handle: true,
-                            }
+                            is_active.store(false, Ordering::SeqCst);
+                            let _ = stop_tx.send(true);
+                            break;
                         }
                     }
                 };
@@ -468,15 +449,15 @@ impl RFerramHostDaemon {
         &self,
         session_id: String,
         encoder_config: EncoderConfig,
-    ) -> Arc<HostSessionEngine> {
+    ) -> Result<Arc<HostSessionEngine>> {
         let session = Arc::new(HostSessionEngine::new(
             session_id,
             self.backend,
             encoder_config,
-        ));
+        )?);
         let mut sessions = self.active_sessions.lock().await;
         sessions.push(session.clone());
-        session
+        Ok(session)
     }
 
     /// Looks up an active [`HostSessionEngine`] by `session_id`.
@@ -583,6 +564,21 @@ impl RFerramHostDaemon {
             }
         };
 
+        let encoder_config = EncoderConfig {
+            codec: preferred_codec,
+            ..EncoderConfig::default()
+        };
+        let session = match self
+            .provision_session(session_id.clone(), encoder_config)
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                Self::send_auth_failure_and_retain(conn, e.to_string()).await;
+                return Err(e);
+            }
+        };
+
         conn.send_uni_message(&WireMessage::Handshake(HandshakeMessage::AuthResponse {
             success: true,
             session_token: Some(session_id.clone()),
@@ -591,14 +587,6 @@ impl RFerramHostDaemon {
         }))
         .await
         .context("Failed to send HandshakeMessage::AuthResponse over QUIC stream")?;
-
-        let encoder_config = EncoderConfig {
-            codec: preferred_codec,
-            ..EncoderConfig::default()
-        };
-        let session = self
-            .provision_session(session_id.clone(), encoder_config)
-            .await;
 
         let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<WireMessage>(256);
         if let Err(e) = session.run_capture_loop(outgoing_tx).await {
@@ -835,12 +823,68 @@ impl RFerramHostDaemon {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CapturedFrame;
     use rferram_channels::ClipboardContent;
     use rferram_net::{QuicClientTransport, QuicServerListener, QuicTransportConfig};
     use rferram_protocol::{
-        AudioCodec, AudioDirection, ClipboardPayload, ElementState, InputEvent, MouseButtonCode,
-        VirtualChannelMessage, encode_length_prefixed,
+        AudioCodec, AudioDirection, ClipboardPayload, ElementState, InputEvent, MonitorInfo,
+        MouseButtonCode, VirtualChannelMessage, encode_length_prefixed,
     };
+
+    struct FailingCapturer;
+
+    impl FrameCapturer for FailingCapturer {
+        fn backend_type(&self) -> CaptureBackendType {
+            CaptureBackendType::WaylandPipeWire
+        }
+
+        fn is_live_display(&self) -> bool {
+            false
+        }
+
+        fn enumerate_monitors(&self) -> Result<Vec<MonitorInfo>> {
+            Ok(vec![])
+        }
+
+        fn capture_next_frame(&mut self) -> Result<CapturedFrame> {
+            Err(anyhow!("boom"))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_capture_error_stops_session() {
+        let session = HostSessionEngine::new(
+            "failing-cap-test".to_string(),
+            CaptureBackendType::WaylandPipeWire,
+            EncoderConfig::default(),
+        )
+        .expect("HostSessionEngine::new should succeed");
+        *session.capturer.lock().await = Box::new(FailingCapturer);
+
+        let (tx, mut rx) = mpsc::channel(16);
+        session.run_capture_loop(tx).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while session.is_running() || !*session.subscribe_stop().borrow() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("Timed out waiting for failing capture to stop session");
+
+        assert!(!session.is_running());
+        assert!(*session.subscribe_stop().borrow());
+        session.stop();
+
+        while let Ok(msg) = rx.try_recv() {
+            if let WireMessage::Video(v) = msg {
+                assert!(
+                    !(v.width == 2560 && v.height == 1440),
+                    "Should not receive a fallback 2560x1440 video frame from failing capturer"
+                );
+            }
+        }
+    }
 
     #[tokio::test]
     async fn test_run_capture_loop_across_platform_frame_capturers() {
@@ -860,7 +904,8 @@ mod tests {
                     height: 1080,
                     ..EncoderConfig::default()
                 },
-            );
+            )
+            .expect("HostSessionEngine::new should succeed");
             let (actual_backend, monitors) = {
                 let cap = engine.capturer.lock().await;
                 (cap.backend_type(), cap.enumerate_monitors().unwrap())
