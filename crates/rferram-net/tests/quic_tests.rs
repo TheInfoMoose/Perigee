@@ -3,6 +3,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use quinn::{Endpoint, EndpointConfig};
 use rferram_common::NistVault;
@@ -146,7 +147,7 @@ async fn test_tls13_alpn_rferram_v1_negotiation_and_cert_sha256_capture() {
 }
 
 #[tokio::test]
-async fn test_tls13_alpn_mismatch_rejected() {
+async fn test_alpn_mismatch_rejected_then_valid_client_accepted() {
     let listener = QuicServerListener::bind(
         "127.0.0.1:0".parse().unwrap(),
         QuicTransportConfig::default(),
@@ -199,10 +200,40 @@ async fn test_tls13_alpn_mismatch_rejected() {
         "QUIC TLS 1.3 handshake must fail when client ALPN does not match rferram-v1"
     );
 
-    let server_accepted = server_task.await.expect("Server task panicked");
+    let valid_client = QuicClientTransport::new(QuicTransportConfig::default())
+        .connect(server_addr, "rferram.host")
+        .await;
     assert!(
-        server_accepted.is_none(),
-        "Server must not accept connection with mismatched ALPN"
+        valid_client.is_ok(),
+        "Valid client must succeed after a failed handshake"
+    );
+
+    let server_accepted = tokio::time::timeout(Duration::from_secs(5), server_task)
+        .await
+        .expect("Server accept timed out")
+        .expect("Server task panicked");
+    assert!(
+        server_accepted.is_some(),
+        "Server must accept valid connection after skipping mismatched ALPN"
+    );
+}
+
+#[tokio::test]
+async fn test_accept_returns_none_after_endpoint_close() {
+    let listener = QuicServerListener::bind(
+        "127.0.0.1:0".parse().unwrap(),
+        QuicTransportConfig::default(),
+    )
+    .expect("Failed to bind QuicServerListener");
+
+    listener.endpoint.close(0u32.into(), b"test");
+
+    let accepted = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+        .await
+        .expect("accept() timed out after endpoint close");
+    assert!(
+        accepted.is_none(),
+        "accept() must return None after endpoint is closed"
     );
 }
 

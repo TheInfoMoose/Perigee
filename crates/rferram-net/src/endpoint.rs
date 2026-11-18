@@ -12,7 +12,7 @@ use anyhow::{Context, Result, anyhow};
 use quinn::{Endpoint, EndpointConfig, ServerConfig, TransportConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use sha2::{Digest, Sha256};
-use tracing::{error, info};
+use tracing::{info, warn};
 
 use crate::{QuicConnectionManager, QuicTransportConfig, VpnSocketFactory};
 
@@ -170,9 +170,10 @@ impl QuicServerListener {
         Ok(self.endpoint.local_addr()?)
     }
 
-    /// Accepts incoming client connection requests
+    /// Waits for the next successfully handshaken connection. Failed handshakes are logged and skipped. Returns `None` only after the endpoint is closed.
     pub async fn accept(&self) -> Option<QuicConnectionManager> {
-        if let Some(incoming) = self.endpoint.accept().await {
+        while let Some(incoming) = self.endpoint.accept().await {
+            let remote_addr = incoming.remote_address();
             match incoming.await {
                 Ok(connection) => {
                     info!(
@@ -186,7 +187,10 @@ impl QuicServerListener {
                     ));
                 }
                 Err(e) => {
-                    error!("Failed to complete incoming QUIC handshake: {e}");
+                    warn!(
+                        "Failed to complete incoming QUIC handshake from {}: {e}",
+                        remote_addr
+                    );
                 }
             }
         }
