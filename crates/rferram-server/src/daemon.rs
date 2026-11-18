@@ -519,6 +519,7 @@ impl RFerramHostDaemon {
     ///    QUIC streams.
     /// 4. Routes inbound QUIC datagrams, unidirectional streams, and bidirectional streams to
     ///    [`HostSessionEngine::handle_incoming_wire_message`] and [`VirtualChannelManager`].
+    /// 5. Removes the session from the registry and closes the connection when the session stops or the peer disconnects.
     pub async fn serve_connection(
         &self,
         conn: impl Into<Arc<QuicConnectionManager>>,
@@ -660,12 +661,20 @@ impl RFerramHostDaemon {
                         }
                     }
                     Err(e) => {
+                        if conn_dgram.connection.close_reason().is_some() {
+                            debug!(
+                                session_id = %session_dgram.session_id,
+                                error = %e,
+                                "Inbound QUIC datagram receiver loop ended"
+                            );
+                            session_dgram.stop();
+                            break;
+                        }
                         debug!(
                             session_id = %session_dgram.session_id,
                             error = %e,
-                            "Inbound QUIC datagram receiver loop ended"
+                            "Failed to decode inbound QUIC datagram message"
                         );
-                        break;
                     }
                 }
             }
@@ -759,7 +768,7 @@ impl RFerramHostDaemon {
         });
 
         // Task 4: Route inbound QUIC bidirectional streams (e.g., SimplyTransfer / Clipboard)
-        let conn_bi = conn;
+        let conn_bi = conn.clone();
         let session_bi = session.clone();
         let channel_mgr_bi = session.channel_manager.clone();
         let mut stop_bi = session.subscribe_stop();
@@ -769,14 +778,48 @@ impl RFerramHostDaemon {
                     res = conn_bi.connection.accept_bi() => res,
                     _ = stop_bi.changed() => break,
                 };
-                let Ok((mut send_stream, mut recv_stream)) = accept_res else {
-                    break;
+                let (mut send_stream, mut recv_stream) = match accept_res {
+                    Ok(streams) => streams,
+                    Err(e) => {
+                        if conn_bi.connection.close_reason().is_some() {
+                            debug!(
+                                session_id = %session_bi.session_id,
+                                error = %e,
+                                "Inbound QUIC bidirectional stream receiver loop ended"
+                            );
+                            session_bi.stop();
+                            break;
+                        }
+                        debug!(
+                            session_id = %session_bi.session_id,
+                            error = %e,
+                            "Failed to accept inbound QUIC bidirectional stream"
+                        );
+                        continue;
+                    }
                 };
-                let Ok(data) = recv_stream
+                let data = match recv_stream
                     .read_to_end(rferram_protocol::MAX_WIRE_FRAME_BYTES + 4)
                     .await
-                else {
-                    continue;
+                {
+                    Ok(data) => data,
+                    Err(e) => {
+                        if conn_bi.connection.close_reason().is_some() {
+                            debug!(
+                                session_id = %session_bi.session_id,
+                                error = %e,
+                                "Inbound QUIC bidirectional stream read ended due to connection close"
+                            );
+                            session_bi.stop();
+                            break;
+                        }
+                        debug!(
+                            session_id = %session_bi.session_id,
+                            error = %e,
+                            "Failed to read inbound QUIC bidirectional stream"
+                        );
+                        continue;
+                    }
                 };
                 conn_bi
                     .metrics
@@ -806,7 +849,11 @@ impl RFerramHostDaemon {
                         }
                     }
                     Err(e) => {
-                        warn!(
+                        if conn_bi.connection.close_reason().is_some() {
+                            session_bi.stop();
+                            break;
+                        }
+                        debug!(
                             session_id = %session_bi.session_id,
                             error = %e,
                             "Failed to decode inbound QUIC bidirectional stream message"
@@ -814,6 +861,28 @@ impl RFerramHostDaemon {
                     }
                 }
             }
+        });
+
+        let active_sessions_reaper = Arc::clone(&self.active_sessions);
+        let session_reaper = session.clone();
+        let mut stop_reaper = session.subscribe_stop();
+        let conn_reaper = conn;
+        tokio::spawn(async move {
+            let ended_by = tokio::select! {
+                _ = stop_reaper.wait_for(|&stopped| stopped) => "host session stop",
+                _ = conn_reaper.connection.closed() => "peer connection close",
+            };
+            session_reaper.stop();
+            {
+                let mut sessions = active_sessions_reaper.lock().await;
+                sessions.retain(|s| s.session_id != session_reaper.session_id);
+            }
+            conn_reaper.connection.close(0u32.into(), b"session ended");
+            info!(
+                session_id = %session_reaper.session_id,
+                ended_by,
+                "Reaped stopped session and closed QUIC connection"
+            );
         });
 
         Ok(session)
@@ -1122,8 +1191,110 @@ mod tests {
         .expect("Timed out waiting for session to stop after Disconnect");
 
         assert!(!session.is_running());
-        assert!(daemon.terminate_session(&session.session_id).await);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while daemon.active_session_count().await != 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("Timed out waiting for session to be removed from registry");
         assert_eq!(daemon.active_session_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_session_removed_when_client_connection_closes() {
+        let vault = NistVault::new("test.rferram.server.client_close");
+        let daemon = Arc::new(RFerramHostDaemon::with_vault(
+            "client-close-host-daemon".to_string(),
+            CaptureBackendType::WaylandPipeWire,
+            vault,
+        ));
+
+        let listener = QuicServerListener::bind(
+            "127.0.0.1:0".parse().unwrap(),
+            QuicTransportConfig::default(),
+        )
+        .expect("Failed to bind QUIC listener");
+        let server_addr = listener.local_addr().unwrap();
+        let expected_cert_sha256 = listener.server_cert_sha256;
+
+        let daemon_server = daemon.clone();
+        let server_task = tokio::spawn(async move {
+            let server_conn = listener
+                .accept()
+                .await
+                .expect("Server failed to accept QUIC connection");
+            let session = daemon_server
+                .serve_connection(server_conn)
+                .await
+                .expect("serve_connection should succeed for valid Ed25519 handshake");
+            (listener, session)
+        });
+
+        let client = QuicClientTransport::new(QuicTransportConfig::default());
+        let client_conn = client
+            .connect(server_addr, "rferram.host")
+            .await
+            .expect("Client failed to connect to QUIC listener");
+
+        let peer_cert_sha256 = client_conn
+            .peer_cert_sha256()
+            .expect("Client should capture server TLS 1.3 leaf cert SHA-256");
+        assert_eq!(peer_cert_sha256, expected_cert_sha256);
+
+        let (signing_key, verifying_key) = daemon
+            .vault
+            .get_or_create_ed25519_identity("client_close_quic_client")
+            .expect("Should create Ed25519 identity");
+        let challenge = b"rferram-client-close-loopback-challenge";
+        let signature =
+            NistVault::sign_channel_bound_challenge(&signing_key, challenge, &peer_cert_sha256);
+        let auth_req = RFerramHostDaemon::build_ed25519_auth_request(
+            &verifying_key.to_bytes(),
+            &peer_cert_sha256,
+            challenge,
+            &signature,
+        );
+
+        client_conn
+            .send_uni_message(&WireMessage::Handshake(auth_req))
+            .await
+            .expect("Client failed to send AuthRequest");
+
+        let auth_resp_wire =
+            tokio::time::timeout(Duration::from_secs(5), client_conn.recv_uni_message())
+                .await
+                .expect("Timed out waiting for AuthResponse")
+                .expect("Failed to receive AuthResponse");
+        let WireMessage::Handshake(HandshakeMessage::AuthResponse {
+            success: true,
+            session_token: Some(session_token),
+            ..
+        }) = auth_resp_wire
+        else {
+            panic!("Expected successful AuthResponse, got {auth_resp_wire:?}");
+        };
+        assert!(!session_token.is_empty());
+
+        let (_listener, session) = tokio::time::timeout(Duration::from_secs(5), server_task)
+            .await
+            .expect("Server task timed out")
+            .expect("Server task panicked");
+        assert_eq!(session.session_id, session_token);
+        assert_eq!(daemon.active_session_count().await, 1);
+
+        client_conn.connection.close(0u32.into(), b"bye");
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while daemon.active_session_count().await != 0 || session.is_running() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("Timed out waiting for session removal and stop after client close");
+
+        assert_eq!(daemon.active_session_count().await, 0);
+        assert!(!session.is_running());
     }
 
     #[tokio::test]
