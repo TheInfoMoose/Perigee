@@ -1,4 +1,4 @@
-name: rFerram Continuous Integration
+name: Perigee Continuous Integration
 
 permissions:
   contents: read
@@ -127,6 +127,6 @@ jobs:
 
       - name: Execute Host Daemon Smoke Test
         env:
-          RFERRAM_SMOKE_TEST: "1"
-          RFERRAM_BIND_ADDR: "127.0.0.1:0"
-        run: cargo run -p rferram-server --locked
+          PERIGEE_SMOKE_TEST: "1"
+          PERIGEE_BIND_ADDR: "127.0.0.1:0"
+        run: cargo run -p perigee-host --locked

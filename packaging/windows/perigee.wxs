@@ -1,46 +1,46 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package
-    Name="rFerram"
+    Name="Perigee"
     Manufacturer="TheInfoMoose"
     Version="$(var.Version)"
     UpgradeCode="8D83E4C2-7122-4B08-9415-B47A928C63D1"
     Scope="perMachine">
 
     <SummaryInformation
-      Description="rFerram Zero-Copy QUIC Remote Display Viewer and Host Daemon"
+      Description="Perigee Zero-Copy QUIC Remote Display Viewer and Host Daemon"
       Manufacturer="TheInfoMoose" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <Icon Id="rFerramIcon" SourceFile="$(var.RootDir)\packaging\icons\rferram.ico" />
-    <Property Id="ARPPRODUCTICON" Value="rFerramIcon" />
+    <Icon Id="PerigeeIcon" SourceFile="$(var.RootDir)\packaging\icons\perigee.ico" />
+    <Property Id="ARPPRODUCTICON" Value="PerigeeIcon" />
 
     <StandardDirectory Id="ProgramFiles6432Folder">
-      <Directory Id="INSTALLFOLDER" Name="rFerram" />
+      <Directory Id="INSTALLFOLDER" Name="Perigee" />
     </StandardDirectory>
 
     <StandardDirectory Id="ProgramMenuFolder">
-      <Directory Id="ApplicationProgramsFolder" Name="rFerram" />
+      <Directory Id="ApplicationProgramsFolder" Name="Perigee" />
     </StandardDirectory>
 
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
       <Component Id="ViewerExecutable" Guid="914F7A11-3E28-4A95-A93D-1C5E9F8B3D01">
-        <File Id="RFerramUiExe" Source="$(var.BinDir)\rferram-ui.exe" KeyPath="yes">
+        <File Id="PerigeeUiExe" Source="$(var.BinDir)\perigee-ui.exe" KeyPath="yes">
           <Shortcut
             Id="ApplicationStartMenuShortcut"
             Directory="ApplicationProgramsFolder"
-            Name="rFerram"
+            Name="Perigee"
             Description="Zero-copy QUIC Remote Display Viewer"
-            Icon="rFerramIcon"
+            Icon="PerigeeIcon"
             WorkingDirectory="INSTALLFOLDER"
             Advertise="no" />
         </File>
         <RemoveFolder Id="CleanUpShortCut" Directory="ApplicationProgramsFolder" On="uninstall" />
       </Component>
 
-      <Component Id="ServerExecutable" Guid="B52E6C18-5F41-4E2A-9B0D-7A1E8C4D2F02">
-        <File Id="RFerramServerExe" Source="$(var.BinDir)\rferram-server.exe" KeyPath="yes" />
+      <Component Id="HostExecutable" Guid="B52E6C18-5F41-4E2A-9B0D-7A1E8C4D2F02">
+        <File Id="PerigeeHostExe" Source="$(var.BinDir)\perigee-host.exe" KeyPath="yes" />
       </Component>
 
       <Component Id="DocumentationFiles" Guid="C83D4E29-6A12-4F5B-8C1E-9D2F7B3A4E03">
@@ -49,7 +49,7 @@
       </Component>
     </ComponentGroup>
 
-    <Feature Id="ProductFeature" Title="rFerram Remote Display Suite" Level="1">
+    <Feature Id="ProductFeature" Title="Perigee Remote Display Suite" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
     </Feature>
   </Package>

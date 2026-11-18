@@ -3,14 +3,14 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.theinfomoose.rferram-server</string>
+    <string>com.theinfomoose.perigee-host</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Applications/rFerram.app/Contents/MacOS/rferram-server</string>
+        <string>/Applications/Perigee.app/Contents/MacOS/perigee-host</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
-        <key>RFERRAM_BIND_ADDR</key>
+        <key>PERIGEE_BIND_ADDR</key>
         <string>127.0.0.1:4433</string>
     </dict>
     <key>KeepAlive</key>

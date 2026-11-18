@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rFerram macOS Release Packaging Script (.tar.gz, rFerram.app, .dmg)
+# Perigee macOS Release Packaging Script (.tar.gz, Perigee.app, .dmg)
 # Usage: bash packaging/macos/package-macos.sh <version> <target-triple> [output-dir]
 set -euo pipefail
 
@@ -14,9 +14,9 @@ cd "${WORKSPACE_ROOT}"
 mkdir -p "${OUT_DIR}"
 OUT_DIR="$(cd "${OUT_DIR}" && pwd)"
 
-if [[ -f "target/${TARGET}/release/rferram-ui" && ( ! -f "target/release/rferram-ui" || "target/${TARGET}/release/rferram-ui" -nt "target/release/rferram-ui" ) ]]; then
+if [[ -f "target/${TARGET}/release/perigee-ui" && ( ! -f "target/release/perigee-ui" || "target/${TARGET}/release/perigee-ui" -nt "target/release/perigee-ui" ) ]]; then
     BIN_DIR="target/${TARGET}/release"
-elif [[ -f "target/release/rferram-ui" ]]; then
+elif [[ -f "target/release/perigee-ui" ]]; then
     BIN_DIR="target/release"
 else
     echo "ERROR: Compiled binaries not found in target/${TARGET}/release or target/release" >&2
@@ -30,38 +30,38 @@ trap 'rm -rf "${WORK_DIR}"' EXIT
 # ---------------------------------------------------------------------------
 # 1. Portable Tarball (.tar.gz)
 # ---------------------------------------------------------------------------
-STAGE_TAR="${WORK_DIR}/rferram-${VERSION}-${TARGET}"
+STAGE_TAR="${WORK_DIR}/perigee-${VERSION}-${TARGET}"
 mkdir -p "${STAGE_TAR}/bin" "${STAGE_TAR}/share/launchd"
 
-install -m 0755 "${BIN_DIR}/rferram-ui" "${STAGE_TAR}/bin/rferram-ui"
-install -m 0755 "${BIN_DIR}/rferram-server" "${STAGE_TAR}/bin/rferram-server"
-install -m 0644 "packaging/macos/com.theinfomoose.rferram-server.plist" "${STAGE_TAR}/share/launchd/"
+install -m 0755 "${BIN_DIR}/perigee-ui" "${STAGE_TAR}/bin/perigee-ui"
+install -m 0755 "${BIN_DIR}/perigee-host" "${STAGE_TAR}/bin/perigee-host"
+install -m 0644 "packaging/macos/com.theinfomoose.perigee-host.plist" "${STAGE_TAR}/share/launchd/"
 install -m 0644 "README.md" "${STAGE_TAR}/README.md"
 install -m 0644 "LICENSE" "${STAGE_TAR}/LICENSE"
 
-TAR_ARCHIVE="${OUT_DIR}/rferram-${VERSION}-${TARGET}.tar.gz"
-tar -C "${WORK_DIR}" -czf "${TAR_ARCHIVE}" "rferram-${VERSION}-${TARGET}"
+TAR_ARCHIVE="${OUT_DIR}/perigee-${VERSION}-${TARGET}.tar.gz"
+tar -C "${WORK_DIR}" -czf "${TAR_ARCHIVE}" "perigee-${VERSION}-${TARGET}"
 echo "==> Created portable archive: ${TAR_ARCHIVE}"
 
 # ---------------------------------------------------------------------------
-# 2. macOS Application Bundle (rFerram.app) & Disk Image (.dmg)
+# 2. macOS Application Bundle (Perigee.app) & Disk Image (.dmg)
 # ---------------------------------------------------------------------------
 DMG_STAGE="${WORK_DIR}/dmg-root"
-APP_BUNDLE="${DMG_STAGE}/rFerram.app"
+APP_BUNDLE="${DMG_STAGE}/Perigee.app"
 mkdir -p "${APP_BUNDLE}/Contents/MacOS" "${APP_BUNDLE}/Contents/Resources"
 
-install -m 0755 "${BIN_DIR}/rferram-ui" "${APP_BUNDLE}/Contents/MacOS/rferram-ui"
-install -m 0755 "${BIN_DIR}/rferram-server" "${APP_BUNDLE}/Contents/MacOS/rferram-server"
-install -m 0644 "packaging/macos/com.theinfomoose.rferram-server.plist" "${APP_BUNDLE}/Contents/Resources/"
+install -m 0755 "${BIN_DIR}/perigee-ui" "${APP_BUNDLE}/Contents/MacOS/perigee-ui"
+install -m 0755 "${BIN_DIR}/perigee-host" "${APP_BUNDLE}/Contents/MacOS/perigee-host"
+install -m 0644 "packaging/macos/com.theinfomoose.perigee-host.plist" "${APP_BUNDLE}/Contents/Resources/"
 sed "s/__VERSION__/${VERSION}/g" "packaging/macos/Info.plist" > "${APP_BUNDLE}/Contents/Info.plist"
 
 if command -v sips >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1; then
-    ICONSET_DIR="${WORK_DIR}/rFerram.iconset"
+    ICONSET_DIR="${WORK_DIR}/Perigee.iconset"
     mkdir -p "${ICONSET_DIR}"
-    if [[ -f "packaging/icons/rferram-1024.png" ]]; then
-        SRC_ICON="packaging/icons/rferram-1024.png"
+    if [[ -f "packaging/icons/perigee-1024.png" ]]; then
+        SRC_ICON="packaging/icons/perigee-1024.png"
     else
-        SRC_ICON="packaging/icons/rferram.png"
+        SRC_ICON="packaging/icons/perigee.png"
     fi
     sips -z 16 16     "${SRC_ICON}" --out "${ICONSET_DIR}/icon_16x16.png" >/dev/null
     sips -z 32 32     "${SRC_ICON}" --out "${ICONSET_DIR}/icon_16x16@2x.png" >/dev/null
@@ -73,9 +73,9 @@ if command -v sips >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1; then
     sips -z 512 512   "${SRC_ICON}" --out "${ICONSET_DIR}/icon_256x256@2x.png" >/dev/null
     sips -z 512 512   "${SRC_ICON}" --out "${ICONSET_DIR}/icon_512x512.png" >/dev/null
     sips -z 1024 1024 "${SRC_ICON}" --out "${ICONSET_DIR}/icon_512x512@2x.png" >/dev/null
-    iconutil -c icns "${ICONSET_DIR}" -o "${APP_BUNDLE}/Contents/Resources/rFerram.icns"
-elif [[ -f "packaging/icons/rferram.icns" ]]; then
-    install -m 0644 "packaging/icons/rferram.icns" "${APP_BUNDLE}/Contents/Resources/rFerram.icns"
+    iconutil -c icns "${ICONSET_DIR}" -o "${APP_BUNDLE}/Contents/Resources/Perigee.icns"
+elif [[ -f "packaging/icons/perigee.icns" ]]; then
+    install -m 0644 "packaging/icons/perigee.icns" "${APP_BUNDLE}/Contents/Resources/Perigee.icns"
 fi
 
 if command -v codesign >/dev/null 2>&1; then
@@ -85,9 +85,9 @@ fi
 ln -s /Applications "${DMG_STAGE}/Applications"
 
 if command -v hdiutil >/dev/null 2>&1; then
-    DMG_FILE="${OUT_DIR}/rFerram-${VERSION}-${TARGET}.dmg"
+    DMG_FILE="${OUT_DIR}/Perigee-${VERSION}-${TARGET}.dmg"
     hdiutil create \
-        -volname "rFerram ${VERSION}" \
+        -volname "Perigee ${VERSION}" \
         -srcfolder "${DMG_STAGE}" \
         -ov \
         -format UDZO \

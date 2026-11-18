@@ -1,4 +1,4 @@
-# cargo-deny configuration for rFerram
+# cargo-deny configuration for Perigee
 # Enforces zero RustSec advisories, zero unmaintained crates, and strict license hygiene.
 
 [advisories]

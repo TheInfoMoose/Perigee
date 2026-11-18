@@ -1,13 +1,13 @@
 [Unit]
-Description=rFerram Elevated Host Capture & QUIC Display Daemon
+Description=Perigee Elevated Host Capture & QUIC Display Daemon
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-# Set RFERRAM_BIND_INTERFACE=<vpn interface> (e.g. wg0) in a drop-in;
+# Set PERIGEE_BIND_INTERFACE=<vpn interface> (e.g. wg0) in a drop-in;
 # without it the host listens on 127.0.0.1:4433 only.
-ExecStart=/usr/bin/rferram-server
+ExecStart=/usr/bin/perigee-host
 Restart=on-failure
 RestartSec=5
 AmbientCapabilities=CAP_NET_RAW CAP_SYS_ADMIN

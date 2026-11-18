@@ -1,12 +1,12 @@
 [Desktop Entry]
-Name=rFerram
+Name=Perigee
 GenericName=Remote Desktop Viewer
 Comment=Zero-copy QUIC remote display viewer for COSMIC and modern desktops
-Exec=rferram-ui
-Icon=com.theinfomoose.rFerram
+Exec=perigee-ui
+Icon=com.theinfomoose.Perigee
 Terminal=false
 Type=Application
 Categories=Network;RemoteAccess;System;
 Keywords=remote;desktop;quic;wayland;cosmic;rdp;vnc;
 StartupNotify=true
-StartupWMClass=com.theinfomoose.rFerram
+StartupWMClass=com.theinfomoose.Perigee

@@ -18,7 +18,7 @@ Thumbs.db
 *.pem
 *.key
 *.enc
-.rferram-vault/
+.perigee-vault/
 .simply-transfer/
 
 # Hybrid workflow plan (local, not tracked)

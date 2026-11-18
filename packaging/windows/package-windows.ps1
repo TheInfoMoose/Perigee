@@ -1,4 +1,4 @@
-# rFerram Windows Release Packaging Script (.zip and .msi)
+# Perigee Windows Release Packaging Script (.zip and .msi)
 # Usage: pwsh packaging/windows/package-windows.ps1 -Version <ver> -Target <triple> [-OutDir <dir>]
 param(
     [string]$Version = "0.1.0",
@@ -23,15 +23,15 @@ $OutDirPath = (Resolve-Path $OutDir).Path
 $TargetBinDir = Join-Path $WorkspaceRoot "target\$Target\release"
 $DefaultBinDir = Join-Path $WorkspaceRoot "target\release"
 
-$TargetUiExe = Join-Path $TargetBinDir "rferram-ui.exe"
-$DefaultUiExe = Join-Path $DefaultBinDir "rferram-ui.exe"
+$TargetUiExe = Join-Path $TargetBinDir "perigee-ui.exe"
+$DefaultUiExe = Join-Path $DefaultBinDir "perigee-ui.exe"
 
 if ((Test-Path $TargetUiExe) -and ((-not (Test-Path $DefaultUiExe)) -or ((Get-Item $TargetUiExe).LastWriteTimeUtc -ge (Get-Item $DefaultUiExe).LastWriteTimeUtc))) {
     $BinDir = $TargetBinDir
 } elseif (Test-Path $DefaultUiExe) {
     $BinDir = $DefaultBinDir
 } else {
-    throw "Compiled binaries (rferram-ui.exe / rferram-server.exe) not found in $TargetBinDir or $DefaultBinDir"
+    throw "Compiled binaries (perigee-ui.exe / perigee-host.exe) not found in $TargetBinDir or $DefaultBinDir"
 }
 Write-Host "==> Packaging release binaries from: $BinDir"
 
@@ -44,19 +44,19 @@ if ($Target -like "aarch64-*") {
 # ---------------------------------------------------------------------------
 # 1. Portable Archive (.zip)
 # ---------------------------------------------------------------------------
-$StageDir = Join-Path ([System.IO.Path]::GetTempPath()) "rferram-$CleanVersion-$Target"
+$StageDir = Join-Path ([System.IO.Path]::GetTempPath()) "perigee-$CleanVersion-$Target"
 if (Test-Path $StageDir) {
     Remove-Item -Recurse -Force $StageDir
 }
 New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
 
-Copy-Item (Join-Path $BinDir "rferram-ui.exe") -Destination $StageDir
-Copy-Item (Join-Path $BinDir "rferram-server.exe") -Destination $StageDir
-Copy-Item (Join-Path $WorkspaceRoot "packaging\icons\rferram.ico") -Destination $StageDir
+Copy-Item (Join-Path $BinDir "perigee-ui.exe") -Destination $StageDir
+Copy-Item (Join-Path $BinDir "perigee-host.exe") -Destination $StageDir
+Copy-Item (Join-Path $WorkspaceRoot "packaging\icons\perigee.ico") -Destination $StageDir
 Copy-Item (Join-Path $WorkspaceRoot "README.md") -Destination $StageDir
 Copy-Item (Join-Path $WorkspaceRoot "LICENSE") -Destination $StageDir
 
-$ZipFile = Join-Path $OutDirPath "rferram-$CleanVersion-$Target.zip"
+$ZipFile = Join-Path $OutDirPath "perigee-$CleanVersion-$Target.zip"
 if (Test-Path $ZipFile) {
     Remove-Item -Force $ZipFile
 }
@@ -77,8 +77,8 @@ if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
     }
 }
 
-$MsiFile = Join-Path $OutDirPath "rferram-$CleanVersion-$Target.msi"
-$WxsFile = Join-Path $WorkspaceRoot "packaging\windows\rferram.wxs"
+$MsiFile = Join-Path $OutDirPath "perigee-$CleanVersion-$Target.msi"
+$WxsFile = Join-Path $WorkspaceRoot "packaging\windows\perigee.wxs"
 
 wix build $WxsFile `
     -arch $WixArch `

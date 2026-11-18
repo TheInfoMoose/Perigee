@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rFerram Linux Release Packaging Script (.tar.gz, .deb, .rpm, .AppImage)
+# Perigee Linux Release Packaging Script (.tar.gz, .deb, .rpm, .AppImage)
 # Usage: bash packaging/linux/package-linux.sh <version> <target-triple> [output-dir]
 set -euo pipefail
 
@@ -17,9 +17,9 @@ cd "${WORKSPACE_ROOT}"
 mkdir -p "${OUT_DIR}"
 OUT_DIR="$(cd "${OUT_DIR}" && pwd)"
 
-if [[ -f "target/${TARGET}/release/rferram-ui" && ( ! -f "target/release/rferram-ui" || "target/${TARGET}/release/rferram-ui" -nt "target/release/rferram-ui" ) ]]; then
+if [[ -f "target/${TARGET}/release/perigee-ui" && ( ! -f "target/release/perigee-ui" || "target/${TARGET}/release/perigee-ui" -nt "target/release/perigee-ui" ) ]]; then
     BIN_DIR="target/${TARGET}/release"
-elif [[ -f "target/release/rferram-ui" ]]; then
+elif [[ -f "target/release/perigee-ui" ]]; then
     BIN_DIR="target/release"
 else
     echo "ERROR: Compiled binaries not found in target/${TARGET}/release or target/release" >&2
@@ -49,18 +49,18 @@ HICOLOR_SIZES=(16 32 48 64 128 256 512)
 install_hicolor_icons() {
     local dest_hicolor="$1"
     for sz in "${HICOLOR_SIZES[@]}"; do
-        local src_icon="packaging/icons/hicolor/${sz}x${sz}/apps/com.theinfomoose.rFerram.png"
+        local src_icon="packaging/icons/hicolor/${sz}x${sz}/apps/com.theinfomoose.Perigee.png"
         if [[ ! -f "${src_icon}" ]]; then
-            src_icon="packaging/icons/rferram.png"
+            src_icon="packaging/icons/perigee.png"
         fi
         mkdir -p "${dest_hicolor}/${sz}x${sz}/apps"
-        install -m 0644 "${src_icon}" "${dest_hicolor}/${sz}x${sz}/apps/com.theinfomoose.rFerram.png"
+        install -m 0644 "${src_icon}" "${dest_hicolor}/${sz}x${sz}/apps/com.theinfomoose.Perigee.png"
     done
-    if [[ -f "packaging/icons/hicolor/scalable/apps/com.theinfomoose.rFerram-symbolic.svg" ]]; then
+    if [[ -f "packaging/icons/hicolor/scalable/apps/com.theinfomoose.Perigee-symbolic.svg" ]]; then
         mkdir -p "${dest_hicolor}/scalable/apps"
         install -m 0644 \
-            "packaging/icons/hicolor/scalable/apps/com.theinfomoose.rFerram-symbolic.svg" \
-            "${dest_hicolor}/scalable/apps/com.theinfomoose.rFerram-symbolic.svg"
+            "packaging/icons/hicolor/scalable/apps/com.theinfomoose.Perigee-symbolic.svg" \
+            "${dest_hicolor}/scalable/apps/com.theinfomoose.Perigee-symbolic.svg"
     fi
 }
 
@@ -70,21 +70,21 @@ trap 'rm -rf "${WORK_DIR}"' EXIT
 # ---------------------------------------------------------------------------
 # 1. Portable Tarball (.tar.gz)
 # ---------------------------------------------------------------------------
-STAGE_TAR="${WORK_DIR}/rferram-${VERSION}-${TARGET}"
+STAGE_TAR="${WORK_DIR}/perigee-${VERSION}-${TARGET}"
 mkdir -p "${STAGE_TAR}/bin" "${STAGE_TAR}/share/applications" "${STAGE_TAR}/share/icons" "${STAGE_TAR}/share/systemd"
 
-install -m 0755 "${BIN_DIR}/rferram-ui" "${STAGE_TAR}/bin/rferram-ui"
-install -m 0755 "${BIN_DIR}/rferram-server" "${STAGE_TAR}/bin/rferram-server"
-install -m 0644 "packaging/linux/com.theinfomoose.rFerram.desktop" "${STAGE_TAR}/share/applications/"
-install -m 0644 "packaging/linux/com.theinfomoose.rFerram.metainfo.xml" "${STAGE_TAR}/share/applications/"
-install -m 0644 "packaging/icons/rferram.png" "${STAGE_TAR}/share/icons/com.theinfomoose.rFerram.png"
+install -m 0755 "${BIN_DIR}/perigee-ui" "${STAGE_TAR}/bin/perigee-ui"
+install -m 0755 "${BIN_DIR}/perigee-host" "${STAGE_TAR}/bin/perigee-host"
+install -m 0644 "packaging/linux/com.theinfomoose.Perigee.desktop" "${STAGE_TAR}/share/applications/"
+install -m 0644 "packaging/linux/com.theinfomoose.Perigee.metainfo.xml" "${STAGE_TAR}/share/applications/"
+install -m 0644 "packaging/icons/perigee.png" "${STAGE_TAR}/share/icons/com.theinfomoose.Perigee.png"
 install_hicolor_icons "${STAGE_TAR}/share/icons/hicolor"
-install -m 0644 "packaging/linux/rferram-server.service" "${STAGE_TAR}/share/systemd/"
+install -m 0644 "packaging/linux/perigee-host.service" "${STAGE_TAR}/share/systemd/"
 install -m 0644 "README.md" "${STAGE_TAR}/README.md"
 install -m 0644 "LICENSE" "${STAGE_TAR}/LICENSE"
 
-TAR_ARCHIVE="${OUT_DIR}/rferram-${VERSION}-${TARGET}.tar.gz"
-tar -C "${WORK_DIR}" -czf "${TAR_ARCHIVE}" "rferram-${VERSION}-${TARGET}"
+TAR_ARCHIVE="${OUT_DIR}/perigee-${VERSION}-${TARGET}.tar.gz"
+tar -C "${WORK_DIR}" -czf "${TAR_ARCHIVE}" "perigee-${VERSION}-${TARGET}"
 echo "==> Created portable archive: ${TAR_ARCHIVE}"
 
 # ---------------------------------------------------------------------------
@@ -98,36 +98,36 @@ if command -v dpkg-deb >/dev/null 2>&1; then
         "${DEB_ROOT}/usr/share/applications" \
         "${DEB_ROOT}/usr/share/metainfo" \
         "${DEB_ROOT}/lib/systemd/system" \
-        "${DEB_ROOT}/usr/share/doc/rferram"
+        "${DEB_ROOT}/usr/share/doc/perigee"
 
-    install -m 0755 "${BIN_DIR}/rferram-ui" "${DEB_ROOT}/usr/bin/rferram-ui"
-    install -m 0755 "${BIN_DIR}/rferram-server" "${DEB_ROOT}/usr/bin/rferram-server"
-    install -m 0644 "packaging/linux/com.theinfomoose.rFerram.desktop" "${DEB_ROOT}/usr/share/applications/com.theinfomoose.rFerram.desktop"
-    install -m 0644 "packaging/linux/com.theinfomoose.rFerram.metainfo.xml" "${DEB_ROOT}/usr/share/metainfo/com.theinfomoose.rFerram.metainfo.xml"
+    install -m 0755 "${BIN_DIR}/perigee-ui" "${DEB_ROOT}/usr/bin/perigee-ui"
+    install -m 0755 "${BIN_DIR}/perigee-host" "${DEB_ROOT}/usr/bin/perigee-host"
+    install -m 0644 "packaging/linux/com.theinfomoose.Perigee.desktop" "${DEB_ROOT}/usr/share/applications/com.theinfomoose.Perigee.desktop"
+    install -m 0644 "packaging/linux/com.theinfomoose.Perigee.metainfo.xml" "${DEB_ROOT}/usr/share/metainfo/com.theinfomoose.Perigee.metainfo.xml"
     install_hicolor_icons "${DEB_ROOT}/usr/share/icons/hicolor"
-    install -m 0644 "packaging/linux/rferram-server.service" "${DEB_ROOT}/lib/systemd/system/rferram-server.service"
-    install -m 0644 "README.md" "${DEB_ROOT}/usr/share/doc/rferram/README.md"
-    install -m 0644 "LICENSE" "${DEB_ROOT}/usr/share/doc/rferram/copyright"
+    install -m 0644 "packaging/linux/perigee-host.service" "${DEB_ROOT}/lib/systemd/system/perigee-host.service"
+    install -m 0644 "README.md" "${DEB_ROOT}/usr/share/doc/perigee/README.md"
+    install -m 0644 "LICENSE" "${DEB_ROOT}/usr/share/doc/perigee/copyright"
 
     INSTALLED_KB="$(du -sk "${DEB_ROOT}/usr" "${DEB_ROOT}/lib" | awk '{s+=$1} END {print s}')"
 
     cat > "${DEB_ROOT}/DEBIAN/control" <<EOF
-Package: rferram
+Package: perigee
 Version: ${DEB_VERSION}
 Section: net
 Priority: optional
 Architecture: ${DEB_ARCH}
 Installed-Size: ${INSTALLED_KB}
 Depends: libc6, libwayland-client0, libdrm2, libgbm1, libxkbcommon0, libdbus-1-3
-Maintainer: TheInfoMoose <https://github.com/TheInfoMoose/rFerram>
-Homepage: https://github.com/TheInfoMoose/rFerram
+Maintainer: TheInfoMoose <https://github.com/TheInfoMoose/Perigee>
+Homepage: https://github.com/TheInfoMoose/Perigee
 Description: Zero-copy QUIC remote display viewer and host daemon for COSMIC
- rFerram is a hyper-optimized, zero-copy, cross-platform remote display
+ Perigee is a hyper-optimized, zero-copy, cross-platform remote display
  application built in pure Rust for COSMIC Desktop and modern systems.
- Includes both the rferram-ui viewer and the rferram-server host daemon.
+ Includes both the perigee-ui viewer and the perigee-host host daemon.
 EOF
 
-    DEB_FILE="${OUT_DIR}/rferram_${VERSION}_${DEB_ARCH}.deb"
+    DEB_FILE="${OUT_DIR}/perigee_${VERSION}_${DEB_ARCH}.deb"
     dpkg-deb --build --root-owner-group "${DEB_ROOT}" "${DEB_FILE}"
     echo "==> Created Debian package: ${DEB_FILE}"
 elif [[ "${CI:-false}" == "true" ]]; then
@@ -144,59 +144,59 @@ if command -v rpmbuild >/dev/null 2>&1; then
     RPM_TOPDIR="${WORK_DIR}/rpmbuild"
     mkdir -p "${RPM_TOPDIR}"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
-    SPEC_FILE="${RPM_TOPDIR}/SPECS/rferram.spec"
+    SPEC_FILE="${RPM_TOPDIR}/SPECS/perigee.spec"
     cat > "${SPEC_FILE}" <<EOF
 %global debug_package %{nil}
 %define _build_id_links none
 
-Name:           rferram
+Name:           perigee
 Version:        ${RPM_VERSION}
 Release:        1
 Summary:        Zero-copy QUIC remote display viewer and host daemon for COSMIC
 License:        GPL-3.0-only
-URL:            https://github.com/TheInfoMoose/rFerram
+URL:            https://github.com/TheInfoMoose/Perigee
 BuildArch:      ${RPM_ARCH}
 
 %description
-rFerram is a hyper-optimized, zero-copy, cross-platform remote display
+Perigee is a hyper-optimized, zero-copy, cross-platform remote display
 application built in pure Rust for COSMIC Desktop and modern platforms.
-Includes both the rferram-ui viewer and the rferram-server host daemon.
+Includes both the perigee-ui viewer and the perigee-host host daemon.
 
 %install
 mkdir -p %{buildroot}/usr/bin
 mkdir -p %{buildroot}/usr/share/applications
 mkdir -p %{buildroot}/usr/share/metainfo
 mkdir -p %{buildroot}/usr/lib/systemd/system
-mkdir -p %{buildroot}/usr/share/doc/rferram
+mkdir -p %{buildroot}/usr/share/doc/perigee
 
-install -m 0755 "${WORKSPACE_ROOT}/${BIN_DIR}/rferram-ui" %{buildroot}/usr/bin/rferram-ui
-install -m 0755 "${WORKSPACE_ROOT}/${BIN_DIR}/rferram-server" %{buildroot}/usr/bin/rferram-server
-install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/com.theinfomoose.rFerram.desktop" %{buildroot}/usr/share/applications/com.theinfomoose.rFerram.desktop
-install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/com.theinfomoose.rFerram.metainfo.xml" %{buildroot}/usr/share/metainfo/com.theinfomoose.rFerram.metainfo.xml
+install -m 0755 "${WORKSPACE_ROOT}/${BIN_DIR}/perigee-ui" %{buildroot}/usr/bin/perigee-ui
+install -m 0755 "${WORKSPACE_ROOT}/${BIN_DIR}/perigee-host" %{buildroot}/usr/bin/perigee-host
+install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/com.theinfomoose.Perigee.desktop" %{buildroot}/usr/share/applications/com.theinfomoose.Perigee.desktop
+install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/com.theinfomoose.Perigee.metainfo.xml" %{buildroot}/usr/share/metainfo/com.theinfomoose.Perigee.metainfo.xml
 for sz in 16 32 48 64 128 256 512; do
     mkdir -p %{buildroot}/usr/share/icons/hicolor/\${sz}x\${sz}/apps
-    install -m 0644 "${WORKSPACE_ROOT}/packaging/icons/hicolor/\${sz}x\${sz}/apps/com.theinfomoose.rFerram.png" %{buildroot}/usr/share/icons/hicolor/\${sz}x\${sz}/apps/com.theinfomoose.rFerram.png
+    install -m 0644 "${WORKSPACE_ROOT}/packaging/icons/hicolor/\${sz}x\${sz}/apps/com.theinfomoose.Perigee.png" %{buildroot}/usr/share/icons/hicolor/\${sz}x\${sz}/apps/com.theinfomoose.Perigee.png
 done
 mkdir -p %{buildroot}/usr/share/icons/hicolor/scalable/apps
-install -m 0644 "${WORKSPACE_ROOT}/packaging/icons/hicolor/scalable/apps/com.theinfomoose.rFerram-symbolic.svg" %{buildroot}/usr/share/icons/hicolor/scalable/apps/com.theinfomoose.rFerram-symbolic.svg
-install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/rferram-server.service" %{buildroot}/usr/lib/systemd/system/rferram-server.service
-install -m 0644 "${WORKSPACE_ROOT}/README.md" %{buildroot}/usr/share/doc/rferram/README.md
-install -m 0644 "${WORKSPACE_ROOT}/LICENSE" %{buildroot}/usr/share/doc/rferram/LICENSE
+install -m 0644 "${WORKSPACE_ROOT}/packaging/icons/hicolor/scalable/apps/com.theinfomoose.Perigee-symbolic.svg" %{buildroot}/usr/share/icons/hicolor/scalable/apps/com.theinfomoose.Perigee-symbolic.svg
+install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/perigee-host.service" %{buildroot}/usr/lib/systemd/system/perigee-host.service
+install -m 0644 "${WORKSPACE_ROOT}/README.md" %{buildroot}/usr/share/doc/perigee/README.md
+install -m 0644 "${WORKSPACE_ROOT}/LICENSE" %{buildroot}/usr/share/doc/perigee/LICENSE
 
 %files
-/usr/bin/rferram-ui
-/usr/bin/rferram-server
-/usr/share/applications/com.theinfomoose.rFerram.desktop
-/usr/share/metainfo/com.theinfomoose.rFerram.metainfo.xml
-/usr/share/icons/hicolor/*/apps/com.theinfomoose.rFerram*
-/usr/lib/systemd/system/rferram-server.service
-/usr/share/doc/rferram/README.md
-/usr/share/doc/rferram/LICENSE
+/usr/bin/perigee-ui
+/usr/bin/perigee-host
+/usr/share/applications/com.theinfomoose.Perigee.desktop
+/usr/share/metainfo/com.theinfomoose.Perigee.metainfo.xml
+/usr/share/icons/hicolor/*/apps/com.theinfomoose.Perigee*
+/usr/lib/systemd/system/perigee-host.service
+/usr/share/doc/perigee/README.md
+/usr/share/doc/perigee/LICENSE
 EOF
 
     rpmbuild --define "_topdir ${RPM_TOPDIR}" --target "${RPM_ARCH}" -bb "${SPEC_FILE}"
     FOUND_RPM="$(find "${RPM_TOPDIR}/RPMS" -name "*.rpm" | head -n 1)"
-    RPM_OUT="${OUT_DIR}/rferram-${VERSION}-1.${RPM_ARCH}.rpm"
+    RPM_OUT="${OUT_DIR}/perigee-${VERSION}-1.${RPM_ARCH}.rpm"
     cp "${FOUND_RPM}" "${RPM_OUT}"
     echo "==> Created RPM package: ${RPM_OUT}"
 elif [[ "${CI:-false}" == "true" ]]; then
@@ -209,33 +209,33 @@ fi
 # ---------------------------------------------------------------------------
 # 4. Portable Linux AppImage (.AppImage)
 # ---------------------------------------------------------------------------
-APPDIR="${WORK_DIR}/rFerram.AppDir"
+APPDIR="${WORK_DIR}/Perigee.AppDir"
 mkdir -p \
     "${APPDIR}/usr/bin" \
     "${APPDIR}/usr/share/applications" \
     "${APPDIR}/usr/share/metainfo" \
     "${APPDIR}/usr/lib/systemd/system" \
-    "${APPDIR}/usr/share/doc/rferram"
+    "${APPDIR}/usr/share/doc/perigee"
 
 install -m 0755 "packaging/linux/AppRun" "${APPDIR}/AppRun"
-install -m 0644 "packaging/linux/com.theinfomoose.rFerram.desktop" "${APPDIR}/com.theinfomoose.rFerram.desktop"
-if [[ -f "packaging/icons/hicolor/256x256/apps/com.theinfomoose.rFerram.png" ]]; then
-    install -m 0644 "packaging/icons/hicolor/256x256/apps/com.theinfomoose.rFerram.png" "${APPDIR}/com.theinfomoose.rFerram.png"
+install -m 0644 "packaging/linux/com.theinfomoose.Perigee.desktop" "${APPDIR}/com.theinfomoose.Perigee.desktop"
+if [[ -f "packaging/icons/hicolor/256x256/apps/com.theinfomoose.Perigee.png" ]]; then
+    install -m 0644 "packaging/icons/hicolor/256x256/apps/com.theinfomoose.Perigee.png" "${APPDIR}/com.theinfomoose.Perigee.png"
 else
-    install -m 0644 "packaging/icons/rferram.png" "${APPDIR}/com.theinfomoose.rFerram.png"
+    install -m 0644 "packaging/icons/perigee.png" "${APPDIR}/com.theinfomoose.Perigee.png"
 fi
-ln -sf "com.theinfomoose.rFerram.png" "${APPDIR}/.DirIcon"
+ln -sf "com.theinfomoose.Perigee.png" "${APPDIR}/.DirIcon"
 
-install -m 0755 "${BIN_DIR}/rferram-ui" "${APPDIR}/usr/bin/rferram-ui"
-install -m 0755 "${BIN_DIR}/rferram-server" "${APPDIR}/usr/bin/rferram-server"
-install -m 0644 "packaging/linux/com.theinfomoose.rFerram.desktop" "${APPDIR}/usr/share/applications/com.theinfomoose.rFerram.desktop"
-install -m 0644 "packaging/linux/com.theinfomoose.rFerram.metainfo.xml" "${APPDIR}/usr/share/metainfo/com.theinfomoose.rFerram.metainfo.xml"
+install -m 0755 "${BIN_DIR}/perigee-ui" "${APPDIR}/usr/bin/perigee-ui"
+install -m 0755 "${BIN_DIR}/perigee-host" "${APPDIR}/usr/bin/perigee-host"
+install -m 0644 "packaging/linux/com.theinfomoose.Perigee.desktop" "${APPDIR}/usr/share/applications/com.theinfomoose.Perigee.desktop"
+install -m 0644 "packaging/linux/com.theinfomoose.Perigee.metainfo.xml" "${APPDIR}/usr/share/metainfo/com.theinfomoose.Perigee.metainfo.xml"
 install_hicolor_icons "${APPDIR}/usr/share/icons/hicolor"
-install -m 0644 "packaging/linux/rferram-server.service" "${APPDIR}/usr/lib/systemd/system/rferram-server.service"
-install -m 0644 "README.md" "${APPDIR}/usr/share/doc/rferram/README.md"
-install -m 0644 "LICENSE" "${APPDIR}/usr/share/doc/rferram/LICENSE"
+install -m 0644 "packaging/linux/perigee-host.service" "${APPDIR}/usr/lib/systemd/system/perigee-host.service"
+install -m 0644 "README.md" "${APPDIR}/usr/share/doc/perigee/README.md"
+install -m 0644 "LICENSE" "${APPDIR}/usr/share/doc/perigee/LICENSE"
 
-APPIMAGE_FILE="${OUT_DIR}/rFerram-${VERSION}-${APPIMAGE_ARCH}.AppImage"
+APPIMAGE_FILE="${OUT_DIR}/Perigee-${VERSION}-${APPIMAGE_ARCH}.AppImage"
 rm -f "${APPIMAGE_FILE}"
 
 if command -v appimagetool >/dev/null 2>&1 && ARCH="${APPIMAGE_ARCH}" APPIMAGE_EXTRACT_AND_RUN=1 appimagetool --no-appstream "${APPDIR}" "${APPIMAGE_FILE}"; then
@@ -394,14 +394,14 @@ int main(int argc, char **argv) {
     uint64_t offset = 0;
     uint64_t size = 0;
     if (read_payload_bounds(self_path, &offset, &size) != 0) {
-        fprintf(stderr, "ERROR: Invalid or corrupted rFerram AppImage payload header.\n");
+        fprintf(stderr, "ERROR: Invalid or corrupted Perigee AppImage payload header.\n");
         return 1;
     }
 
     int arg_shift = 0;
     if (argc > 1) {
         if (strcmp(argv[1], "--appimage-help") == 0) {
-            printf("rFerram Type-2 Self-Extracting AppImage Runtime\n");
+            printf("Perigee Type-2 Self-Extracting AppImage Runtime\n");
             printf("  --appimage-extract           Extract content to squashfs-root/\n");
             printf("  --appimage-extract-and-run   Extract content to temporary directory and execute AppRun\n");
             printf("  --appimage-offset            Print byte offset of embedded AppDir archive\n");
@@ -410,7 +410,7 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (strcmp(argv[1], "--appimage-version") == 0) {
-            printf("rFerram AppImage Type-2 Runtime v2.0\n");
+            printf("Perigee AppImage Type-2 Runtime v2.0\n");
             return 0;
         }
         if (strcmp(argv[1], "--appimage-offset") == 0) {
@@ -434,7 +434,7 @@ int main(int argc, char **argv) {
         tmp_base = "/tmp";
     }
     char work_dir[PATH_MAX];
-    snprintf(work_dir, sizeof(work_dir), "%s/appimage_rferram_XXXXXX", tmp_base);
+    snprintf(work_dir, sizeof(work_dir), "%s/appimage_perigee_XXXXXX", tmp_base);
     if (!mkdtemp(work_dir)) {
         perror("mkdtemp");
         return 1;

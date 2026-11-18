@@ -5,17 +5,17 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>rFerram</string>
+    <string>Perigee</string>
     <key>CFBundleExecutable</key>
-    <string>rferram-ui</string>
+    <string>perigee-ui</string>
     <key>CFBundleIconFile</key>
-    <string>rFerram.icns</string>
+    <string>Perigee.icns</string>
     <key>CFBundleIdentifier</key>
-    <string>com.theinfomoose.rFerram</string>
+    <string>com.theinfomoose.Perigee</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>rFerram</string>
+    <string>Perigee</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -27,8 +27,8 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSScreenCaptureUsageDescription</key>
-    <string>rFerram requires Screen Recording permission to capture display frames via ScreenCaptureKit when hosting a remote session.</string>
+    <string>Perigee requires Screen Recording permission to capture display frames via ScreenCaptureKit when hosting a remote session.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>rFerram requires Microphone access for bi-directional voice passthrough during remote sessions.</string>
+    <string>Perigee requires Microphone access for bi-directional voice passthrough during remote sessions.</string>
 </dict>
 </plist>

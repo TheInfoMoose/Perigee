@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rFerram AppImage Entrypoint (AppRun)
+# Perigee AppImage Entrypoint (AppRun)
 set -euo pipefail
 
 APPDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,13 +8,13 @@ export PATH="${APPDIR}/usr/bin:${PATH:-/usr/bin:/bin}"
 export XDG_DATA_DIRS="${APPDIR}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 
 INVOKED_NAME="$(basename "${ARGV0:-$0}")"
-if [[ "${INVOKED_NAME}" == "rferram-server" ]]; then
-    exec "${APPDIR}/usr/bin/rferram-server" "$@"
+if [[ "${INVOKED_NAME}" == "perigee-host" ]]; then
+    exec "${APPDIR}/usr/bin/perigee-host" "$@"
 fi
 
 if [[ "${1:-}" == "--server" || "${1:-}" == "--daemon" ]]; then
     shift
-    exec "${APPDIR}/usr/bin/rferram-server" "$@"
+    exec "${APPDIR}/usr/bin/perigee-host" "$@"
 fi
 
-exec "${APPDIR}/usr/bin/rferram-ui" "$@"
+exec "${APPDIR}/usr/bin/perigee-ui" "$@"

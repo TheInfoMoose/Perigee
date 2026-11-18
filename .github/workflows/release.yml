@@ -1,4 +1,4 @@
-name: rFerram Release Build & Packaging
+name: Perigee Release Build & Packaging
 
 permissions:
   contents: write
@@ -192,15 +192,15 @@ jobs:
         if: matrix.native_exec
         shell: bash
         env:
-          RFERRAM_SMOKE_TEST: "1"
-          RFERRAM_BIND_ADDR: "127.0.0.1:0"
+          PERIGEE_SMOKE_TEST: "1"
+          PERIGEE_BIND_ADDR: "127.0.0.1:0"
         run: |
           if [[ "${{ matrix.platform }}" == "windows" ]]; then
-            ./target/${{ matrix.target }}/release/rferram-server.exe
-            ./target/${{ matrix.target }}/release/rferram-ui.exe
+            ./target/${{ matrix.target }}/release/perigee-host.exe
+            ./target/${{ matrix.target }}/release/perigee-ui.exe
           else
-            ./target/${{ matrix.target }}/release/rferram-server
-            ./target/${{ matrix.target }}/release/rferram-ui
+            ./target/${{ matrix.target }}/release/perigee-host
+            ./target/${{ matrix.target }}/release/perigee-ui
           fi
 
       - name: Package Linux Release Artifacts (.tar.gz, .deb, .rpm, .AppImage)
@@ -210,10 +210,10 @@ jobs:
           bash packaging/linux/package-linux.sh "${{ steps.meta.outputs.version }}" "${{ matrix.target }}" dist
           APPIMAGE_ARCH="${{ matrix.target }}"
           APPIMAGE_ARCH="${APPIMAGE_ARCH%%-*}"
-          RFERRAM_SMOKE_TEST=1 "./dist/rFerram-${{ steps.meta.outputs.version }}-${APPIMAGE_ARCH}.AppImage"
-          RFERRAM_SMOKE_TEST=1 RFERRAM_BIND_ADDR=127.0.0.1:0 "./dist/rFerram-${{ steps.meta.outputs.version }}-${APPIMAGE_ARCH}.AppImage" --server
+          PERIGEE_SMOKE_TEST=1 "./dist/Perigee-${{ steps.meta.outputs.version }}-${APPIMAGE_ARCH}.AppImage"
+          PERIGEE_SMOKE_TEST=1 PERIGEE_BIND_ADDR=127.0.0.1:0 "./dist/Perigee-${{ steps.meta.outputs.version }}-${APPIMAGE_ARCH}.AppImage" --server
 
-      - name: Package macOS Release Artifacts (.tar.gz, rFerram.app, .dmg)
+      - name: Package macOS Release Artifacts (.tar.gz, Perigee.app, .dmg)
         if: matrix.platform == 'macos'
         shell: bash
         run: |
@@ -273,7 +273,7 @@ jobs:
       - name: Upload Consolidated Release Bundle Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rferram-${{ steps.meta.outputs.version }}-all-platforms
+          name: perigee-${{ steps.meta.outputs.version }}-all-platforms
           path: release-assets/*
           if-no-files-found: error
 
@@ -282,7 +282,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
-          name: "rFerram ${{ steps.meta.outputs.tag }}"
+          name: "Perigee ${{ steps.meta.outputs.tag }}"
           draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
           prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || contains(steps.meta.outputs.tag, '-') }}
           generate_release_notes: true
