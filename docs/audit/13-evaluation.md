@@ -114,3 +114,14 @@ Each has Claude's recommendation first. The first four change what Phase 2+ look
 10. **Lightweight destination app scope (R9).** Recommend: `rferram-host` = daemon + setup subcommands (pair, check permissions, install a non-root service). A GUI onboarding helper (macOS TCC prompts, portal consent) comes with the GUI phase.
 11. **GUI toolkit (R10).** Recommend: freeze `rferram-ui` and `vendor/libcosmic` now (only moving backend logic out), and rebuild on real upstream libcosmic in the GUI phase. That's a dependency change, so it needs your approval when the time comes.
 12. **`libxkbcommon` (BASE-07).** Recommend: keep linking it and document the dev package. dlopen isn't worth the complexity yet.
+
+## Decisions recorded (user, 2026-11-17)
+1. **Go, rebuild in place.** The app is being **renamed to Perigee**.
+2. **`simply-transfer-link`: co-develop now.** ST 3A + 4A–4F run as a parallel track, with rFerram's three needs folded into ST STEP 4D.
+3. **Display mode: headless is the primary focus.** Release order is **Linux → macOS → Windows**. Target: RustDesk-class out of the gate, with full Wayland and COSMIC Wayland support, taking special care with **cosmic-greeter** (the login screen).
+4. **First OS: Linux / COSMIC.**
+
+### What decision 3 changes
+- **Headless and the greeter push the host below the user session.** Unattended access before login means the host must reach the greeter's compositor session, which runs as a separate user. The `xdg-desktop-portal` route recommended above needs a consent dialog in a logged-in session, so it can't serve the greeter or unattended access. The likely route is compositor-level protocols (screen copy, virtual pointer/keyboard, or libei) against cosmic-comp, plus a privileged system service that follows the active seat from greeter to user session. **(Suspected: needs a research spike against cosmic-comp and cosmic-greeter before Phase 5 is written.)**
+- **Phase 5 grows**, and a research step (what cosmic-comp exposes for headless outputs, capture, input and greeter handoff) comes first.
+- **R6 is reordered:** headless and session takeover first, screen share after.
