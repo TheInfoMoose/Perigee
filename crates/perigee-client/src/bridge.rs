@@ -5,14 +5,20 @@
 //! unordered QUIC UDP datagrams (`send_datagram` / `recv_datagram`) and length-prefixed
 //! `Handshake`, `Topology`, `Video`, `Audio`, `Channel`, and reliable `Control` messages
 //! (such as `LossReport`) over QUIC unidirectional streams (`send_uni_message` / `recv_uni_message`).
+//!
+//! Session lifecycle progresses through `Connecting` → `Authenticating` → `Active` → `Terminated`.
+//! [`QuicSessionBridge::disconnect`] (or [`crate::connect::ClientSession::disconnect`]) is the only
+//! teardown path.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use perigee_net::QuicConnectionManager;
 use perigee_protocol::{ControlMessage, InputEvent, WireMessage};
 use tokio::sync::{mpsc, watch};
+use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
 use crate::render::DecodedFrameSurface;
@@ -27,6 +33,9 @@ pub struct QuicSessionBridge {
     pub pipeline: ClientSessionPipeline,
     pub connection: Arc<QuicConnectionManager>,
     pub is_running: Arc<AtomicBool>,
+    tasks: Mutex<Vec<JoinHandle<()>>>,
+    drained: AtomicBool,
+    disconnect_lock: tokio::sync::Mutex<()>,
 }
 
 impl QuicSessionBridge {
@@ -81,10 +90,16 @@ impl QuicSessionBridge {
         // Task 1: Outbound pump (ClientSessionPipeline -> QuicConnectionManager)
         let conn_outbound = connection.clone();
         let running_outbound = is_running.clone();
-        tokio::spawn(async move {
+        let outbound_handle = tokio::spawn(async move {
             while running_outbound.load(Ordering::Relaxed) {
-                let Some(msg) = outbound_rx.recv().await else {
-                    break;
+                let msg = tokio::select! {
+                    _ = conn_outbound.connection.closed() => break,
+                    maybe_msg = outbound_rx.recv() => {
+                        let Some(msg) = maybe_msg else {
+                            break;
+                        };
+                        msg
+                    }
                 };
                 if let Err(e) = Self::dispatch_outbound(&conn_outbound, &msg).await {
                     debug!(error = %e, "Outbound QUIC bridge dispatch terminated");
@@ -98,7 +113,7 @@ impl QuicSessionBridge {
         let conn_dgram = connection.clone();
         let inbound_tx_dgram = inbound_tx.clone();
         let running_dgram = is_running.clone();
-        tokio::spawn(async move {
+        let dgram_handle = tokio::spawn(async move {
             while running_dgram.load(Ordering::Relaxed) {
                 match conn_dgram.recv_datagram().await {
                     Ok(msg) => {
@@ -118,7 +133,7 @@ impl QuicSessionBridge {
         let conn_uni = connection.clone();
         let inbound_tx_uni = inbound_tx;
         let running_uni = is_running.clone();
-        tokio::spawn(async move {
+        let uni_handle = tokio::spawn(async move {
             while running_uni.load(Ordering::Relaxed) {
                 match conn_uni.recv_uni_message().await {
                     Ok(msg) => {
@@ -136,10 +151,37 @@ impl QuicSessionBridge {
             }
         });
 
+        // Task 4: Close watcher (marks session Terminated if the QUIC connection closes)
+        let conn_close = connection.clone();
+        let running_close = is_running.clone();
+        let state_close = pipeline.state.clone();
+        let close_handle = tokio::spawn(async move {
+            let err = conn_close.connection.closed().await;
+            running_close.store(false, Ordering::SeqCst);
+            state_close.send_if_modified(|state| {
+                if matches!(state, SessionState::Terminated { .. }) {
+                    false
+                } else {
+                    *state = SessionState::Terminated {
+                        reason: format!("connection closed: {err}"),
+                    };
+                    true
+                }
+            });
+        });
+
         let bridge = Self {
             pipeline,
             connection,
             is_running,
+            tasks: Mutex::new(vec![
+                outbound_handle,
+                dgram_handle,
+                uni_handle,
+                close_handle,
+            ]),
+            drained: AtomicBool::new(false),
+            disconnect_lock: tokio::sync::Mutex::new(()),
         };
 
         (bridge, state_rx, video_rx, input_tx)
@@ -159,11 +201,92 @@ impl QuicSessionBridge {
     pub fn stop(&self) {
         self.is_running.store(false, Ordering::SeqCst);
     }
+
+    /// Returns `true` when all bridge and pipeline tasks have finished or been drained by [`Self::disconnect`].
+    pub fn tasks_finished(&self) -> bool {
+        if self.drained.load(Ordering::SeqCst) {
+            return true;
+        }
+        let guard = match self.tasks.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        !guard.is_empty()
+            && guard.iter().all(JoinHandle::is_finished)
+            && self.pipeline.tasks_finished()
+    }
+
+    /// Cleanly disconnects the session: notifies the host, stops pump tasks, closes the QUIC
+    /// connection, transitions the session state to `Terminated`, and drains all spawned tasks.
+    pub async fn disconnect(&self, reason: &str) {
+        let _disconnect_guard = self.disconnect_lock.lock().await;
+
+        let already_terminated = matches!(
+            *self.pipeline.state.borrow(),
+            SessionState::Terminated { .. }
+        );
+        if !already_terminated {
+            let msg = WireMessage::Control(ControlMessage::Disconnect {
+                reason: reason.to_string(),
+            });
+            let _ = tokio::time::timeout(Duration::from_secs(1), async {
+                self.connection.send_uni_message(&msg).await?;
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                Ok::<(), anyhow::Error>(())
+            })
+            .await;
+        }
+
+        self.stop();
+        self.connection
+            .connection
+            .close(0u32.into(), b"client disconnect");
+
+        self.pipeline.state.send_if_modified(|state| {
+            if matches!(state, SessionState::Terminated { .. }) {
+                false
+            } else {
+                *state = SessionState::Terminated {
+                    reason: format!("client disconnect: {reason}"),
+                };
+                true
+            }
+        });
+
+        let mut handles = {
+            let mut guard = match self.tasks.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            std::mem::take(&mut *guard)
+        };
+        handles.extend(self.pipeline.take_tasks());
+
+        if !handles.is_empty() {
+            let abort_handles: Vec<_> = handles.iter().map(JoinHandle::abort_handle).collect();
+            let join_all = async move {
+                for handle in handles {
+                    let _ = handle.await;
+                }
+            };
+            if tokio::time::timeout(Duration::from_secs(2), join_all)
+                .await
+                .is_err()
+            {
+                for abort_handle in abort_handles {
+                    abort_handle.abort();
+                }
+            }
+        }
+
+        self.drained.store(true, Ordering::SeqCst);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connect::{ConnectOptions, connect};
     use perigee_net::{QuicClientTransport, QuicServerListener, QuicTransportConfig};
     use perigee_protocol::{
         AudioCodec, AudioDirection, AudioFrameMessage, ElementState, HandshakeMessage,
@@ -393,5 +516,189 @@ mod tests {
 
         bridge.stop();
         assert!(!bridge.is_active());
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_sends_disconnect_and_drains_tasks() {
+        let listener = QuicServerListener::bind(
+            "127.0.0.1:0".parse().unwrap(),
+            QuicTransportConfig::default(),
+        )
+        .expect("Failed to bind QUIC listener");
+        let server_addr = listener.local_addr().unwrap();
+
+        let server_task = tokio::spawn(async move {
+            let server_conn = listener.accept().await.expect("Server failed to accept");
+            let hello = server_conn
+                .recv_uni_message()
+                .await
+                .expect("Failed to receive ClientHello");
+            assert!(matches!(
+                hello,
+                WireMessage::Handshake(HandshakeMessage::ClientHello { .. })
+            ));
+
+            server_conn
+                .send_uni_message(&WireMessage::Handshake(HandshakeMessage::AuthResponse {
+                    success: true,
+                    session_token: Some(String::from("tok-disconnect-01")),
+                    error_message: None,
+                    requires_elevation: false,
+                }))
+                .await
+                .expect("Failed to send AuthResponse");
+
+            let disconnect_msg =
+                tokio::time::timeout(Duration::from_secs(5), server_conn.recv_uni_message())
+                    .await
+                    .expect("Timed out waiting for Disconnect message")
+                    .expect("Failed to receive Disconnect message");
+
+            tokio::time::timeout(Duration::from_secs(5), server_conn.connection.closed())
+                .await
+                .expect("Timed out waiting for server connection close");
+
+            (listener, server_conn, disconnect_msg)
+        });
+
+        let session = connect(ConnectOptions::new(server_addr.to_string()))
+            .await
+            .expect("connect should succeed");
+
+        session.disconnect("test").await;
+
+        let (_listener, _server_conn, disconnect_msg) = server_task.await.unwrap();
+        assert_eq!(
+            disconnect_msg,
+            WireMessage::Control(ControlMessage::Disconnect {
+                reason: String::from("test"),
+            })
+        );
+        assert!(session.bridge.tasks_finished());
+        assert!(!session.bridge.is_active());
+        match session.state() {
+            SessionState::Terminated { reason } => {
+                assert!(
+                    reason.starts_with("client disconnect"),
+                    "expected reason to start with 'client disconnect', got: {reason}"
+                );
+            }
+            other => panic!("expected Terminated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_host_close_moves_client_to_terminated() {
+        let listener = QuicServerListener::bind(
+            "127.0.0.1:0".parse().unwrap(),
+            QuicTransportConfig::default(),
+        )
+        .expect("Failed to bind QUIC listener");
+        let server_addr = listener.local_addr().unwrap();
+
+        let (connected_tx, connected_rx) = tokio::sync::oneshot::channel();
+        let server_task = tokio::spawn(async move {
+            let server_conn = listener.accept().await.expect("Server failed to accept");
+            let _hello = server_conn
+                .recv_uni_message()
+                .await
+                .expect("Failed to receive ClientHello");
+
+            server_conn
+                .send_uni_message(&WireMessage::Handshake(HandshakeMessage::AuthResponse {
+                    success: true,
+                    session_token: Some(String::from("tok-host-close-01")),
+                    error_message: None,
+                    requires_elevation: false,
+                }))
+                .await
+                .expect("Failed to send AuthResponse");
+
+            let _ = connected_rx.await;
+            server_conn.connection.close(0u32.into(), b"bye");
+            (listener, server_conn)
+        });
+
+        let mut session = connect(ConnectOptions::new(server_addr.to_string()))
+            .await
+            .expect("connect should succeed");
+        let _ = connected_tx.send(());
+
+        let terminated_reason = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let SessionState::Terminated { reason } =
+                    session.state_rx.borrow_and_update().clone()
+                {
+                    return reason;
+                }
+                session.state_rx.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("Timed out waiting for client state to become Terminated");
+
+        assert!(
+            terminated_reason.starts_with("connection closed"),
+            "expected reason to start with 'connection closed', got: {terminated_reason}"
+        );
+        assert!(!session.bridge.is_active());
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !session.bridge.tasks_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("All bridge and pipeline tasks should finish after host close");
+        assert!(session.bridge.tasks_finished());
+
+        let _ = server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_twice_is_harmless() {
+        let listener = QuicServerListener::bind(
+            "127.0.0.1:0".parse().unwrap(),
+            QuicTransportConfig::default(),
+        )
+        .expect("Failed to bind QUIC listener");
+        let server_addr = listener.local_addr().unwrap();
+
+        let server_task = tokio::spawn(async move {
+            let server_conn = listener.accept().await.expect("Server failed to accept");
+            let _hello = server_conn
+                .recv_uni_message()
+                .await
+                .expect("Failed to receive ClientHello");
+
+            server_conn
+                .send_uni_message(&WireMessage::Handshake(HandshakeMessage::AuthResponse {
+                    success: true,
+                    session_token: Some(String::from("tok-twice-01")),
+                    error_message: None,
+                    requires_elevation: false,
+                }))
+                .await
+                .expect("Failed to send AuthResponse");
+
+            let _ = server_conn.connection.closed().await;
+            (listener, server_conn)
+        });
+
+        let session = connect(ConnectOptions::new(server_addr.to_string()))
+            .await
+            .expect("connect should succeed");
+
+        session.disconnect("first").await;
+        session.disconnect("second").await;
+        tokio::join!(
+            session.disconnect("concurrent-1"),
+            session.disconnect("concurrent-2")
+        );
+
+        assert!(session.bridge.tasks_finished());
+        assert!(!session.bridge.is_active());
+
+        let _ = server_task.await.unwrap();
     }
 }

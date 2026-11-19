@@ -79,6 +79,10 @@ pub enum SessionState {
 }
 
 /// Main Session Controller for managing a single active remote desktop connection.
+///
+/// Session lifecycle progresses through `Connecting` → `Authenticating` → `Active` → `Terminated`.
+/// [`crate::bridge::QuicSessionBridge::disconnect`] (or [`crate::connect::ClientSession::disconnect`])
+/// is the only teardown path.
 pub struct ClientSessionPipeline {
     pub config: SessionConfig,
     pub state: watch::Sender<SessionState>,
@@ -87,6 +91,7 @@ pub struct ClientSessionPipeline {
     pub wire_tx: mpsc::Sender<WireMessage>,
     pub video_frame_tx: mpsc::Sender<DecodedFrameSurface>,
     pub input_event_tx: mpsc::Sender<InputEvent>,
+    tasks: std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
 impl ClientSessionPipeline {
@@ -107,26 +112,17 @@ impl ClientSessionPipeline {
         let metrics = Arc::new(Mutex::new(SessionMetrics::default()));
         let audio_buffer = Arc::new(Mutex::new(ClientAudioBuffer::default()));
 
-        let pipeline = Self {
-            config: config.clone(),
-            state: state_tx.clone(),
-            metrics: metrics.clone(),
-            audio_buffer: audio_buffer.clone(),
-            wire_tx: wire_tx.clone(),
-            video_frame_tx: video_tx.clone(),
-            input_event_tx: input_tx.clone(),
-        };
-
         // Task 1: Demux incoming wire messages from transport
         let wire_tx_feedback = wire_tx.clone();
         let metrics_demux = metrics.clone();
-        let audio_demux = audio_buffer;
+        let audio_demux = audio_buffer.clone();
         let enable_audio = config.enable_audio;
         let state_demux = state_tx.clone();
-        tokio::spawn(async move {
+        let video_tx_demux = video_tx.clone();
+        let demux_handle = tokio::spawn(async move {
             Self::demux_loop(
                 wire_rx,
-                video_tx,
+                video_tx_demux,
                 wire_tx_feedback,
                 metrics_demux,
                 audio_demux,
@@ -138,30 +134,51 @@ impl ClientSessionPipeline {
 
         // Task 2: Outbound input capture event queue
         let wire_tx_input = wire_tx.clone();
-        tokio::spawn(async move {
-            while let Some(input) = input_rx.recv().await {
-                let msg = WireMessage::Input(input);
-                if let Err(e) = wire_tx_input.send(msg).await {
-                    error!("Failed to dispatch input event over QUIC transport: {e}");
-                    break;
+        let mut state_input_rx = state_rx.clone();
+        let input_handle = tokio::spawn(async move {
+            let wait_terminated = async {
+                loop {
+                    if matches!(
+                        *state_input_rx.borrow_and_update(),
+                        SessionState::Terminated { .. }
+                    ) {
+                        break;
+                    }
+                    if state_input_rx.changed().await.is_err() {
+                        break;
+                    }
                 }
+            };
+            let forward_input = async {
+                while let Some(input) = input_rx.recv().await {
+                    let msg = WireMessage::Input(input);
+                    if let Err(e) = wire_tx_input.send(msg).await {
+                        error!("Failed to dispatch input event over QUIC transport: {e}");
+                        break;
+                    }
+                }
+            };
+            tokio::select! {
+                _ = wait_terminated => {}
+                _ = forward_input => {}
             }
         });
 
         // Task 3: Initial Handshake sequence over QUIC
-        let wire_tx_handshake = wire_tx;
-        let state_handshake = state_tx;
-        tokio::spawn(async move {
+        let wire_tx_handshake = wire_tx.clone();
+        let state_handshake = state_tx.clone();
+        let config_handshake = config.clone();
+        let hello_handle = tokio::spawn(async move {
             info!(
                 "Initiating session handshake with target {}",
-                config.host_address
+                config_handshake.host_address
             );
             let handshake = WireMessage::Handshake(HandshakeMessage::ClientHello {
                 protocol_version: 1,
                 client_id: String::from("perigee-client-v0.1"),
                 client_name: String::from(get_platform_client_name()),
                 supported_codecs: vec![
-                    config.preferred_video_codec,
+                    config_handshake.preferred_video_codec,
                     VideoCodec::H265,
                     VideoCodec::RawBgra,
                 ],
@@ -182,7 +199,33 @@ impl ClientSessionPipeline {
             }
         });
 
+        let pipeline = Self {
+            config,
+            state: state_tx,
+            metrics,
+            audio_buffer,
+            wire_tx,
+            video_frame_tx: video_tx,
+            input_event_tx: input_tx.clone(),
+            tasks: std::sync::Mutex::new(vec![demux_handle, input_handle, hello_handle]),
+        };
+
         (pipeline, state_rx, video_rx, input_tx)
+    }
+
+    pub(crate) fn take_tasks(&self) -> Vec<tokio::task::JoinHandle<()>> {
+        match self.tasks.lock() {
+            Ok(mut guard) => std::mem::take(&mut *guard),
+            Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+        }
+    }
+
+    pub(crate) fn tasks_finished(&self) -> bool {
+        let guard = match self.tasks.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        !guard.is_empty() && guard.iter().all(tokio::task::JoinHandle::is_finished)
     }
 
     /// Asynchronous demuxing loop for incoming wire packets.
@@ -198,133 +241,156 @@ impl ClientSessionPipeline {
         let mut frame_count = 0u64;
         let mut expected_frame_id: Option<u64> = None;
         let mut last_fps_check = Instant::now();
+        let mut state_rx = state_tx.subscribe();
 
-        while let Some(msg) = wire_rx.recv().await {
-            match msg {
-                WireMessage::Handshake(h) => {
-                    info!(?h, "Handshake update received");
-                    match h {
-                        HandshakeMessage::AuthResponse { success: true, .. } => {
-                            let _ = state_tx.send(SessionState::Active);
-                        }
-                        HandshakeMessage::AuthResponse {
-                            success: false,
-                            error_message,
-                            ..
-                        } => {
-                            let _ = state_tx.send(SessionState::Terminated {
-                                reason: error_message
-                                    .unwrap_or_else(|| "authentication rejected".into()),
-                            });
-                        }
-                        _ => {}
-                    }
+        let wait_terminated = async {
+            loop {
+                if matches!(
+                    *state_rx.borrow_and_update(),
+                    SessionState::Terminated { .. }
+                ) {
+                    break;
                 }
-                WireMessage::Topology(t) => {
-                    info!(?t, "Host display topology updated");
+                if state_rx.changed().await.is_err() {
+                    break;
                 }
-                WireMessage::Video(frame) => {
-                    let frame_idx = frame.frame_id;
-                    let timestamp_us = frame.timestamp_us;
-                    let payload_len = frame.payload.len() as u64;
+            }
+        };
 
-                    // Detect sequence gaps and emit instant LossReport for IDR keyframe recovery
-                    if let Some(expected) = expected_frame_id {
-                        if frame_idx > expected {
-                            let missing = (expected..frame_idx)
-                                .take(MAX_LOSS_REPORT_FRAMES)
-                                .collect::<Vec<u64>>();
-                            warn!(
-                                gap = frame_idx - expected,
-                                reported = missing.len(),
-                                "Detected video frame sequence gap; sending LossReport"
-                            );
-                            let _ = wire_tx_feedback
-                                .send(WireMessage::Control(ControlMessage::LossReport {
-                                    missing_frames: missing,
-                                }))
-                                .await;
-                        } else if frame_idx < expected {
-                            debug!(frame_idx, expected, "late or duplicate video frame");
+        let process_messages = async {
+            while let Some(msg) = wire_rx.recv().await {
+                match msg {
+                    WireMessage::Handshake(h) => {
+                        info!(?h, "Handshake update received");
+                        match h {
+                            HandshakeMessage::AuthResponse { success: true, .. } => {
+                                let _ = state_tx.send(SessionState::Active);
+                            }
+                            HandshakeMessage::AuthResponse {
+                                success: false,
+                                error_message,
+                                ..
+                            } => {
+                                let _ = state_tx.send(SessionState::Terminated {
+                                    reason: error_message
+                                        .unwrap_or_else(|| "authentication rejected".into()),
+                                });
+                                break;
+                            }
+                            _ => {}
                         }
                     }
-                    expected_frame_id = Some(
-                        expected_frame_id
-                            .unwrap_or(0)
-                            .max(frame_idx.saturating_add(1)),
-                    );
+                    WireMessage::Topology(t) => {
+                        info!(?t, "Host display topology updated");
+                    }
+                    WireMessage::Video(frame) => {
+                        let frame_idx = frame.frame_id;
+                        let timestamp_us = frame.timestamp_us;
+                        let payload_len = frame.payload.len() as u64;
 
-                    let decode_start = Instant::now();
-                    let decoded_surface = DecodedFrameSurface {
-                        frame_index: frame_idx,
-                        width: frame.width,
-                        height: frame.height,
-                        format: frame.format,
-                        data: frame.payload,
-                        timestamp_us,
-                    };
-                    let decode_dur = decode_start.elapsed().as_micros() as u32;
-
-                    if video_tx.send(decoded_surface).await.is_ok() {
-                        frame_count += 1;
-                        let render_dur = decode_start.elapsed().as_micros() as u32;
-
-                        {
-                            let mut m = metrics.lock().await;
-                            m.total_video_frames_received += 1;
-                            m.total_bytes_received += payload_len;
-                            m.decode_latency_us = decode_dur;
-                            m.render_latency_us = render_dur;
-
-                            if last_fps_check.elapsed() >= Duration::from_secs(1) {
-                                m.current_fps =
-                                    frame_count as f32 / last_fps_check.elapsed().as_secs_f32();
-                                frame_count = 0;
-                                last_fps_check = Instant::now();
+                        // Detect sequence gaps and emit instant LossReport for IDR keyframe recovery
+                        if let Some(expected) = expected_frame_id {
+                            if frame_idx > expected {
+                                let missing = (expected..frame_idx)
+                                    .take(MAX_LOSS_REPORT_FRAMES)
+                                    .collect::<Vec<u64>>();
+                                warn!(
+                                    gap = frame_idx - expected,
+                                    reported = missing.len(),
+                                    "Detected video frame sequence gap; sending LossReport"
+                                );
+                                let _ = wire_tx_feedback
+                                    .send(WireMessage::Control(ControlMessage::LossReport {
+                                        missing_frames: missing,
+                                    }))
+                                    .await;
+                            } else if frame_idx < expected {
+                                debug!(frame_idx, expected, "late or duplicate video frame");
                             }
                         }
+                        expected_frame_id = Some(
+                            expected_frame_id
+                                .unwrap_or(0)
+                                .max(frame_idx.saturating_add(1)),
+                        );
 
-                        let ack = WireMessage::Control(ControlMessage::FrameAck {
-                            frame_id: frame_idx,
-                            monitor_id: frame.monitor_id,
-                            render_delay_us: render_dur,
-                        });
-                        let _ = wire_tx_feedback.send(ack).await;
-                    }
-                }
-                WireMessage::Audio(audio) => {
-                    let payload_len = audio.payload.len() as u64;
-                    debug!(
-                        payload_bytes = payload_len,
-                        codec = ?audio.codec,
-                        "Low-latency audio frame received"
-                    );
-                    {
-                        let mut m = metrics.lock().await;
-                        m.total_bytes_received += payload_len;
-                    }
-                    if enable_audio {
-                        let mut buf = audio_buffer.lock().await;
-                        if let Err(e) = buf.push_frame(audio) {
-                            warn!(error = %e, "Dropped incoming audio frame");
+                        let decode_start = Instant::now();
+                        let decoded_surface = DecodedFrameSurface {
+                            frame_index: frame_idx,
+                            width: frame.width,
+                            height: frame.height,
+                            format: frame.format,
+                            data: frame.payload,
+                            timestamp_us,
+                        };
+                        let decode_dur = decode_start.elapsed().as_micros() as u32;
+
+                        if video_tx.send(decoded_surface).await.is_ok() {
+                            frame_count += 1;
+                            let render_dur = decode_start.elapsed().as_micros() as u32;
+
+                            {
+                                let mut m = metrics.lock().await;
+                                m.total_video_frames_received += 1;
+                                m.total_bytes_received += payload_len;
+                                m.decode_latency_us = decode_dur;
+                                m.render_latency_us = render_dur;
+
+                                if last_fps_check.elapsed() >= Duration::from_secs(1) {
+                                    m.current_fps =
+                                        frame_count as f32 / last_fps_check.elapsed().as_secs_f32();
+                                    frame_count = 0;
+                                    last_fps_check = Instant::now();
+                                }
+                            }
+
+                            let ack = WireMessage::Control(ControlMessage::FrameAck {
+                                frame_id: frame_idx,
+                                monitor_id: frame.monitor_id,
+                                render_delay_us: render_dur,
+                            });
+                            let _ = wire_tx_feedback.send(ack).await;
                         }
                     }
-                }
-                WireMessage::Control(ctrl) => match ctrl {
-                    ControlMessage::BandwidthEstimate { rtt_ms, .. } => {
-                        let mut m = metrics.lock().await;
-                        m.rtt_ms = rtt_ms;
+                    WireMessage::Audio(audio) => {
+                        let payload_len = audio.payload.len() as u64;
+                        debug!(
+                            payload_bytes = payload_len,
+                            codec = ?audio.codec,
+                            "Low-latency audio frame received"
+                        );
+                        {
+                            let mut m = metrics.lock().await;
+                            m.total_bytes_received += payload_len;
+                        }
+                        if enable_audio {
+                            let mut buf = audio_buffer.lock().await;
+                            if let Err(e) = buf.push_frame(audio) {
+                                warn!(error = %e, "Dropped incoming audio frame");
+                            }
+                        }
                     }
-                    ControlMessage::LossReport { missing_frames } => {
-                        warn!(?missing_frames, "Loss report received from host");
+                    WireMessage::Control(ctrl) => match ctrl {
+                        ControlMessage::BandwidthEstimate { rtt_ms, .. } => {
+                            let mut m = metrics.lock().await;
+                            m.rtt_ms = rtt_ms;
+                        }
+                        ControlMessage::LossReport { missing_frames } => {
+                            warn!(?missing_frames, "Loss report received from host");
+                        }
+                        _ => {}
+                    },
+                    WireMessage::Channel(vc) => {
+                        info!(?vc, "Virtual channel payload received");
                     }
-                    _ => {}
-                },
-                WireMessage::Channel(vc) => {
-                    info!(?vc, "Virtual channel payload received");
+                    WireMessage::Input(_) => {}
                 }
-                WireMessage::Input(_) => {}
             }
+        };
+
+        tokio::select! {
+            _ = wait_terminated => {}
+            _ = process_messages => {}
         }
     }
 

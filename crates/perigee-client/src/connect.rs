@@ -117,6 +117,12 @@ impl ClientSession {
     pub fn peer_cert_sha256(&self) -> Option<[u8; 32]> {
         self.bridge.peer_cert_sha256()
     }
+
+    /// Cleanly disconnects the session: notifies the host, closes the QUIC connection,
+    /// marks the session `Terminated`, and drains spawned pipeline and bridge tasks.
+    pub async fn disconnect(&self, reason: &str) {
+        self.bridge.disconnect(reason).await
+    }
 }
 
 /// Resolves `options.target`, connects over QUIC, runs the initial session handshake,
@@ -172,19 +178,11 @@ pub async fn connect(options: ConnectOptions) -> Result<ClientSession> {
             video_rx: Some(video_rx),
         }),
         Ok(Err(err)) => {
-            bridge.stop();
-            bridge
-                .connection
-                .connection
-                .close(0u32.into(), b"handshake failed");
+            bridge.disconnect("handshake failed").await;
             Err(err).with_context(|| format!("Handshake with '{target_label}' failed"))
         }
         Err(_) => {
-            bridge.stop();
-            bridge
-                .connection
-                .connection
-                .close(0u32.into(), b"handshake failed");
+            bridge.disconnect("handshake failed").await;
             Err(anyhow!(
                 "no handshake response from {target_addr} within {timeout:?}"
             ))
