@@ -67,10 +67,15 @@ pub struct SessionMetrics {
 pub enum SessionState {
     Connecting,
     Authenticating,
-    NegotiatingTopology,
     Active,
-    Reconnecting { attempt: u32, reason: String },
-    Terminated { reason: String },
+    /// Reserved for session resume (Phase 4); not sent yet.
+    Reconnecting {
+        attempt: u32,
+        reason: String,
+    },
+    Terminated {
+        reason: String,
+    },
 }
 
 /// Main Session Controller for managing a single active remote desktop connection.
@@ -117,7 +122,7 @@ impl ClientSessionPipeline {
         let metrics_demux = metrics.clone();
         let audio_demux = audio_buffer;
         let enable_audio = config.enable_audio;
-        let state_demux = state_tx;
+        let state_demux = state_tx.clone();
         tokio::spawn(async move {
             Self::demux_loop(
                 wire_rx,
@@ -145,6 +150,7 @@ impl ClientSessionPipeline {
 
         // Task 3: Initial Handshake sequence over QUIC
         let wire_tx_handshake = wire_tx;
+        let state_handshake = state_tx;
         tokio::spawn(async move {
             info!(
                 "Initiating session handshake with target {}",
@@ -164,7 +170,16 @@ impl ClientSessionPipeline {
                     perigee_protocol::AuthMethod::Ed25519Signature,
                 ],
             });
-            let _ = wire_tx_handshake.send(handshake).await;
+            if wire_tx_handshake.send(handshake).await.is_ok() {
+                state_handshake.send_if_modified(|state| {
+                    if *state == SessionState::Connecting {
+                        *state = SessionState::Authenticating;
+                        true
+                    } else {
+                        false
+                    }
+                });
+            }
         });
 
         (pipeline, state_rx, video_rx, input_tx)
@@ -188,8 +203,21 @@ impl ClientSessionPipeline {
             match msg {
                 WireMessage::Handshake(h) => {
                     info!(?h, "Handshake update received");
-                    if matches!(h, HandshakeMessage::AuthResponse { success: true, .. }) {
-                        let _ = state_tx.send(SessionState::Active);
+                    match h {
+                        HandshakeMessage::AuthResponse { success: true, .. } => {
+                            let _ = state_tx.send(SessionState::Active);
+                        }
+                        HandshakeMessage::AuthResponse {
+                            success: false,
+                            error_message,
+                            ..
+                        } => {
+                            let _ = state_tx.send(SessionState::Terminated {
+                                reason: error_message
+                                    .unwrap_or_else(|| "authentication rejected".into()),
+                            });
+                        }
+                        _ => {}
                     }
                 }
                 WireMessage::Topology(t) => {
@@ -482,7 +510,10 @@ mod tests {
 
         // Drain initial ClientHello
         let _hello = client_to_host_rx.recv().await.unwrap();
-        assert_eq!(*state_rx.borrow(), SessionState::Connecting);
+        while *state_rx.borrow_and_update() != SessionState::Authenticating {
+            state_rx.changed().await.unwrap();
+        }
+        assert_eq!(*state_rx.borrow(), SessionState::Authenticating);
 
         // Verify AuthResponse transitions session state to Active
         host_to_client_tx
@@ -495,7 +526,9 @@ mod tests {
             .await
             .unwrap();
 
-        state_rx.changed().await.unwrap();
+        while *state_rx.borrow_and_update() != SessionState::Active {
+            state_rx.changed().await.unwrap();
+        }
         assert_eq!(*state_rx.borrow(), SessionState::Active);
 
         // Verify BandwidthEstimate updates SessionMetrics::rtt_ms
