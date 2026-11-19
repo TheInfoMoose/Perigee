@@ -4,26 +4,27 @@
 //! with the underlying transport, client rendering, and virtual channel subsystems:
 //! - Maps [`VpnAdapterBinding`](crate::VpnAdapterBinding) and [`ConnectionProfile`](perigee_common::ConnectionProfile)
 //!   to [`perigee_net::VpnInterfaceBinding`] (`DefaultSystemRoute`, `SpecificIp`, `InterfaceName`).
-//! - Binds [`perigee_net::QuicClientTransport`] and connects to the target [`SocketAddr`].
-//! - Spawns [`perigee_client::QuicSessionBridge`] alongside [`perigee_client::WgpuRenderPipeline`]
+//! - Connects and disconnects via [`perigee_client::connect`] and [`ClientSession::disconnect`].
+//! - Pairs the resulting [`ClientSession`] with [`perigee_client::WgpuRenderPipeline`]
 //!   and [`perigee_channels::VirtualChannelManager`].
 //! - Streams [`Message::SessionStatusChanged`](crate::Message::SessionStatusChanged) updates and
 //!   populates `active_fps` / `active_rtt_ms` telemetry on [`ProfileUiState`](crate::ProfileUiState).
 
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result};
 use cosmic::app::Task;
 use perigee_channels::VirtualChannelManager;
 use perigee_client::{
-    DecodedFrameSurface, QuicSessionBridge, SessionConfig, SessionState, WgpuRenderPipeline,
+    ClientSession, ConnectOptions, DEFAULT_HANDSHAKE_TIMEOUT, DecodedFrameSurface,
+    QuicSessionBridge, SessionConfig, SessionState, WgpuRenderPipeline,
 };
 use perigee_common::ConnectionProfile;
-use perigee_net::{QuicClientTransport, QuicTransportConfig, VpnInterfaceBinding};
+use perigee_net::VpnInterfaceBinding;
 use perigee_protocol::{
     ControlMessage, HandshakeMessage, InputEvent, PixelFormat, VideoCodec, VirtualChannelMessage,
     WireMessage, decode_length_prefixed,
@@ -33,8 +34,7 @@ use tracing::{debug, info, warn};
 
 use crate::{Message, VpnAdapterBinding};
 
-/// Default QUIC port used when a profile's `host_address` omits `:port`.
-pub const DEFAULT_PERIGEE_PORT: u16 = 4433;
+pub use perigee_client::DEFAULT_PERIGEE_PORT;
 
 /// Default initial surface width for [`WgpuRenderPipeline`] prior to receiving the first video frame.
 pub const DEFAULT_RENDER_WIDTH: u32 = 1920;
@@ -51,14 +51,7 @@ impl VpnAdapterBinding {
         match self {
             Self::Direct => VpnInterfaceBinding::DefaultSystemRoute,
             Self::WireGuard(target) | Self::CustomAdapter(target) => {
-                let trimmed = target.trim();
-                if trimmed.is_empty() {
-                    VpnInterfaceBinding::DefaultSystemRoute
-                } else if let Ok(ip) = trimmed.parse::<IpAddr>() {
-                    VpnInterfaceBinding::SpecificIp(ip)
-                } else {
-                    VpnInterfaceBinding::InterfaceName(trimmed.to_string())
-                }
+                perigee_client::parse_interface_binding(Some(target))
             }
             Self::Tailscale => VpnInterfaceBinding::InterfaceName(String::from("tailscale0")),
             Self::UniFiVpn => VpnInterfaceBinding::InterfaceName(String::from("unifi0")),
@@ -81,33 +74,9 @@ pub fn resolve_vpn_interface_binding(
 /// Parses or resolves a profile's `host_address` string into a target [`SocketAddr`].
 ///
 /// Accepts `ip:port`, `[ipv6]:port`, bare IP addresses (defaulting to port `4433`),
-/// and `hostname:port` / `hostname` strings via [`ToSocketAddrs`].
+/// and `hostname:port` / `hostname` strings via [`std::net::ToSocketAddrs`].
 pub fn resolve_profile_socket_addr(host_address: &str) -> Result<SocketAddr> {
-    let trimmed = host_address.trim();
-    if trimmed.is_empty() {
-        bail!("Connection profile host_address must not be empty");
-    }
-
-    if let Ok(addr) = trimmed.parse::<SocketAddr>() {
-        return Ok(addr);
-    }
-
-    if let Ok(ip) = trimmed.parse::<IpAddr>() {
-        return Ok(SocketAddr::new(ip, DEFAULT_PERIGEE_PORT));
-    }
-
-    let with_default_port = if trimmed.contains(':') {
-        trimmed.to_string()
-    } else {
-        format!("{trimmed}:{DEFAULT_PERIGEE_PORT}")
-    };
-
-    let mut resolved = with_default_port
-        .to_socket_addrs()
-        .with_context(|| format!("Failed to resolve target host address '{trimmed}'"))?;
-    resolved
-        .next()
-        .ok_or_else(|| anyhow!("No socket addresses resolved for '{trimmed}'"))
+    perigee_client::resolve_host_addr(host_address)
 }
 
 /// Snapshot of live session status and performance telemetry for a [`ConnectionProfile`].
@@ -151,11 +120,12 @@ impl SessionConnectOutcome {
     }
 }
 
-/// Active viewer session bundling the QUIC transport bridge, WGPU render pipeline, and virtual channel manager.
+/// Active viewer session bundling the client session, QUIC transport bridge, WGPU render pipeline, and virtual channel manager.
 pub struct ActiveUiSession {
     pub profile_id: String,
     pub target_addr: SocketAddr,
     pub vpn_binding: VpnInterfaceBinding,
+    pub client: Arc<ClientSession>,
     pub bridge: Arc<QuicSessionBridge>,
     pub render_pipeline: Arc<Mutex<WgpuRenderPipeline>>,
     pub channel_manager: Arc<VirtualChannelManager>,
@@ -296,8 +266,8 @@ impl UiSessionController {
         )
     }
 
-    /// Connects to `profile.host_address` using a [`QuicClientTransport`] bound to `vpn_binding`,
-    /// spawns [`QuicSessionBridge`] alongside [`WgpuRenderPipeline`] and [`VirtualChannelManager`],
+    /// Connects to `profile.host_address` via [`perigee_client::connect`] bound to `vpn_binding`,
+    /// pairs the [`ClientSession`] with [`WgpuRenderPipeline`] and [`VirtualChannelManager`],
     /// and returns a [`SessionConnectOutcome`].
     pub async fn connect_profile(
         &self,
@@ -333,34 +303,11 @@ impl UiSessionController {
         vpn_binding: VpnAdapterBinding,
     ) -> SessionConnectOutcome {
         let profile_id = profile.id.clone();
-        let net_binding = resolve_vpn_interface_binding(&profile, &vpn_binding);
-
-        let target_addr = match resolve_profile_socket_addr(&profile.host_address) {
-            Ok(addr) => addr,
-            Err(err) => {
-                let status = format!("Failed: {err}");
-                self.record_failed_status(&profile_id, &status);
-                return SessionConnectOutcome::failed(profile_id, status);
-            }
+        let interface = match resolve_vpn_interface_binding(&profile, &vpn_binding) {
+            VpnInterfaceBinding::DefaultSystemRoute => None,
+            VpnInterfaceBinding::SpecificIp(ip) => Some(ip.to_string()),
+            VpnInterfaceBinding::InterfaceName(name) => Some(name),
         };
-
-        let transport_config = QuicTransportConfig {
-            interface_binding: net_binding.clone(),
-            ..Default::default()
-        };
-        let client_transport = QuicClientTransport::new(transport_config);
-
-        let connection = match client_transport.connect(target_addr, "perigee.host").await {
-            Ok(conn) => Arc::new(conn),
-            Err(err) => {
-                let status = format!("Failed: {err}");
-                self.record_failed_status(&profile_id, &status);
-                return SessionConnectOutcome::failed(profile_id, status);
-            }
-        };
-
-        let (rtt_tx, mut rtt_rx) = mpsc::channel(16);
-        let _ = connection.start_metrics_monitor(rtt_tx).await;
 
         let render_pipeline = match WgpuRenderPipeline::new(
             DEFAULT_RENDER_WIDTH,
@@ -374,8 +321,6 @@ impl UiSessionController {
                 return SessionConnectOutcome::failed(profile_id, status);
             }
         };
-
-        let channel_manager = Arc::new(VirtualChannelManager::new());
 
         let session_config = SessionConfig {
             profile_id: profile_id.clone(),
@@ -391,9 +336,40 @@ impl UiSessionController {
             preferred_video_codec: VideoCodec::AV1,
         };
 
-        let (bridge, state_rx, mut video_rx, _input_tx) =
-            QuicSessionBridge::spawn(session_config, Arc::clone(&connection));
-        let bridge = Arc::new(bridge);
+        let connect_options = ConnectOptions {
+            target: profile.host_address.clone(),
+            interface,
+            handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT,
+            session: session_config,
+        };
+
+        let mut client = match perigee_client::connect(connect_options).await {
+            Ok(session) => session,
+            Err(err) => {
+                let status = format!("Failed: {err:#}");
+                self.record_failed_status(&profile_id, &status);
+                return SessionConnectOutcome::failed(profile_id, status);
+            }
+        };
+
+        let Some(mut video_rx) = client.take_video_rx() else {
+            client.disconnect("missing video receiver").await;
+            let status = String::from("Failed: Missing video frame receiver");
+            self.record_failed_status(&profile_id, &status);
+            return SessionConnectOutcome::failed(profile_id, status);
+        };
+
+        let target_addr = client.target_addr;
+        let net_binding = client.interface_binding.clone();
+        let bridge = Arc::clone(&client.bridge);
+        let connection = Arc::clone(&bridge.connection);
+        let state_rx = client.state_rx.clone();
+        let peer_cert_sha256 = client.peer_cert_sha256();
+
+        let (rtt_tx, mut rtt_rx) = mpsc::channel(16);
+        let _ = connection.start_metrics_monitor(rtt_tx).await;
+
+        let channel_manager = Arc::new(VirtualChannelManager::new());
 
         let latest_frame: Arc<Mutex<Option<DecodedFrameSurface>>> = Arc::new(Mutex::new(None));
         let latest_aligned_plane0: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
@@ -502,34 +478,15 @@ impl UiSessionController {
             }
         });
 
-        // Wait briefly for the initial handshake (AuthResponse -> SessionState::Active) if the server responds right away
-        let mut wait_state_rx = state_rx.clone();
-        let handshake_active = tokio::time::timeout(Duration::from_millis(200), async {
-            while *wait_state_rx.borrow_and_update() != SessionState::Active {
-                if wait_state_rx.changed().await.is_err() {
-                    return false;
-                }
+        // Allow a brief window for any immediate initial video frame or bandwidth control packet
+        let _ = tokio::time::timeout(Duration::from_millis(50), async {
+            while frames_presented.load(Ordering::SeqCst) == 0 {
+                tokio::time::sleep(Duration::from_millis(2)).await;
             }
-            true
         })
-        .await
-        .unwrap_or(false);
+        .await;
 
-        if handshake_active {
-            // Allow a brief window for any immediate initial video frame or bandwidth control packet
-            let _ = tokio::time::timeout(Duration::from_millis(50), async {
-                while frames_presented.load(Ordering::SeqCst) == 0 {
-                    tokio::time::sleep(Duration::from_millis(2)).await;
-                }
-            })
-            .await;
-        }
-
-        let status = if handshake_active || *state_rx.borrow() == SessionState::Active {
-            String::from("Active")
-        } else {
-            String::from("Connected")
-        };
+        let status = String::from("Active");
 
         let (pipeline_fps, pipeline_rtt) = {
             let m = bridge.pipeline.metrics.lock().await;
@@ -551,12 +508,11 @@ impl UiSessionController {
             0.5
         });
 
-        let peer_cert_sha256 = bridge.peer_cert_sha256();
-
         let active_session = Arc::new(ActiveUiSession {
             profile_id: profile_id.clone(),
             target_addr,
             vpn_binding: net_binding,
+            client: Arc::new(client),
             bridge,
             render_pipeline,
             channel_manager,
@@ -577,10 +533,18 @@ impl UiSessionController {
             channel_messages_routed: channel_messages_routed.load(Ordering::SeqCst),
         };
 
-        if let Ok(mut map) = self.sessions.lock()
-            && let Some(prev) = map.insert(profile_id.clone(), active_session)
-        {
+        let replaced = self
+            .sessions
+            .lock()
+            .ok()
+            .and_then(|mut map| map.insert(profile_id.clone(), active_session));
+        if let Some(prev) = replaced {
             prev.stop();
+            if let Ok(rt_handle) = self.runtime_holder.handle() {
+                rt_handle.spawn(async move {
+                    prev.client.disconnect("session replaced").await;
+                });
+            }
         }
         if let Ok(mut map) = self.telemetry.lock() {
             map.insert(profile_id.clone(), snapshot);
@@ -803,10 +767,18 @@ impl UiSessionController {
 
     /// Stops and removes any active session for `profile_id`.
     pub fn disconnect_profile(&self, profile_id: &str) {
-        if let Ok(mut map) = self.sessions.lock()
-            && let Some(sess) = map.remove(profile_id)
-        {
+        let removed = self
+            .sessions
+            .lock()
+            .ok()
+            .and_then(|mut map| map.remove(profile_id));
+        if let Some(sess) = removed {
             sess.stop();
+            if let Ok(rt_handle) = self.runtime_holder.handle() {
+                rt_handle.spawn(async move {
+                    sess.client.disconnect("user disconnect").await;
+                });
+            }
         }
         if let Ok(mut map) = self.telemetry.lock()
             && let Some(entry) = map.get_mut(profile_id)
@@ -821,11 +793,11 @@ impl UiSessionController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::Ipv4Addr;
+    use std::net::{IpAddr, Ipv4Addr};
 
     use cosmic::app::Core;
     use perigee_channels::ClipboardContent;
-    use perigee_net::QuicServerListener;
+    use perigee_net::{QuicServerListener, QuicTransportConfig};
     use perigee_protocol::{
         ClipboardPayload, ElementState, MouseButtonCode, VideoFrameMessage, encode_length_prefixed,
     };
