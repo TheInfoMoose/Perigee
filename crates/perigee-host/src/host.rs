@@ -62,21 +62,35 @@ pub async fn run_host(
 }
 
 /// Waits for an OS termination signal (`SIGINT` / Ctrl-C, or `SIGTERM` on Unix).
+///
+/// Shared by the host daemon and the `perigee` CLI client.
 pub async fn shutdown_signal() {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("failed to install SIGTERM signal handler");
-        tokio::select! {
-            res = tokio::signal::ctrl_c() => {
-                match res {
-                    Ok(()) => info!("Received SIGINT (Ctrl-C), initiating host shutdown"),
-                    Err(e) => warn!(error = %e, "Failed listening for SIGINT, initiating host shutdown"),
+        match signal(SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                tokio::select! {
+                    res = tokio::signal::ctrl_c() => {
+                        match res {
+                            Ok(()) => info!("Received SIGINT (Ctrl-C), shutting down"),
+                            Err(e) => warn!(error = %e, "Failed listening for SIGINT, shutting down"),
+                        }
+                    }
+                    _ = sigterm.recv() => {
+                        info!("Received SIGTERM, shutting down");
+                    }
                 }
             }
-            _ = sigterm.recv() => {
-                info!("Received SIGTERM, initiating host shutdown");
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "SIGTERM handler unavailable; only Ctrl-C will stop this process"
+                );
+                match tokio::signal::ctrl_c().await {
+                    Ok(()) => info!("Received SIGINT (Ctrl-C), shutting down"),
+                    Err(e) => warn!(error = %e, "Failed listening for SIGINT, shutting down"),
+                }
             }
         }
     }
@@ -84,8 +98,8 @@ pub async fn shutdown_signal() {
     #[cfg(not(unix))]
     {
         match tokio::signal::ctrl_c().await {
-            Ok(()) => info!("Received SIGINT (Ctrl-C), initiating host shutdown"),
-            Err(e) => warn!(error = %e, "Failed listening for SIGINT, initiating host shutdown"),
+            Ok(()) => info!("Received SIGINT (Ctrl-C), shutting down"),
+            Err(e) => warn!(error = %e, "Failed listening for SIGINT, shutting down"),
         }
     }
 }

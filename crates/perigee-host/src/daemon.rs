@@ -208,7 +208,9 @@ impl HostSessionEngine {
                 }
                 ControlMessage::LossReport { missing_frames } => {
                     warn!(
-                        ?missing_frames,
+                        missing = missing_frames.len(),
+                        first = ?missing_frames.first(),
+                        last = ?missing_frames.last(),
                         "Client reported packet loss; triggering instant keyframe"
                     );
                     self.force_keyframe_flag.store(true, Ordering::SeqCst);
@@ -218,7 +220,7 @@ impl HostSessionEngine {
                     rtt_ms,
                     ..
                 } => {
-                    let bitrate_kbps = (bytes_per_sec * 8 / 1000) as u32;
+                    let bitrate_kbps = bitrate_kbps_from_bytes_per_sec(bytes_per_sec);
                     debug!(
                         bitrate_kbps,
                         rtt_ms, "Updating encoder bitrate from network feedback"
@@ -253,6 +255,10 @@ impl HostSessionEngine {
         self.audio_capturer.stop();
         info!(session_id = %self.session_id, "Host session stopped");
     }
+}
+
+fn bitrate_kbps_from_bytes_per_sec(bytes_per_sec: u64) -> u32 {
+    u32::try_from(bytes_per_sec.saturating_mul(8) / 1000).unwrap_or(u32::MAX)
 }
 
 /// Elevated Host Daemon Service Background Manager (`systemd`, Windows Service, macOS `launchd`)
@@ -580,14 +586,18 @@ impl PerigeeHostDaemon {
             }
         };
 
-        conn.send_uni_message(&WireMessage::Handshake(HandshakeMessage::AuthResponse {
-            success: true,
-            session_token: Some(session_id.clone()),
-            error_message: None,
-            requires_elevation: false,
-        }))
-        .await
-        .context("Failed to send HandshakeMessage::AuthResponse over QUIC stream")?;
+        if let Err(e) = conn
+            .send_uni_message(&WireMessage::Handshake(HandshakeMessage::AuthResponse {
+                success: true,
+                session_token: Some(session_id.clone()),
+                error_message: None,
+                requires_elevation: false,
+            }))
+            .await
+        {
+            self.terminate_session(&session_id).await;
+            return Err(e.context("Failed to send HandshakeMessage::AuthResponse over QUIC stream"));
+        }
 
         let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<WireMessage>(256);
         if let Err(e) = session.run_capture_loop(outgoing_tx).await {
@@ -1429,5 +1439,31 @@ mod tests {
         daemon.shutdown_all_sessions().await;
         assert!(!s2.is_running());
         assert_eq!(daemon.active_session_count().await, 0);
+    }
+
+    #[test]
+    fn test_bitrate_kbps_saturates() {
+        assert_eq!(bitrate_kbps_from_bytes_per_sec(0), 0);
+        assert_eq!(bitrate_kbps_from_bytes_per_sec(125_000), 1000);
+        assert_eq!(bitrate_kbps_from_bytes_per_sec(u64::MAX), u32::MAX);
+    }
+
+    #[tokio::test]
+    async fn test_bandwidth_estimate_from_peer_does_not_panic() {
+        let session = HostSessionEngine::new(
+            "bw-estimate-test".to_string(),
+            CaptureBackendType::WaylandPipeWire,
+            EncoderConfig::default(),
+        )
+        .expect("HostSessionEngine::new should succeed");
+
+        session
+            .handle_incoming_wire_message(WireMessage::Control(ControlMessage::BandwidthEstimate {
+                bytes_per_sec: u64::MAX,
+                rtt_ms: 1.0,
+                jitter_ms: 0.0,
+            }))
+            .await
+            .expect("handle_incoming_wire_message should succeed");
     }
 }
