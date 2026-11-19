@@ -1,12 +1,161 @@
 //! Host accept loop and graceful shutdown.
 
 use crate::PerigeeHostDaemon;
-use anyhow::Result;
-use perigee_net::QuicServerListener;
+use anyhow::{Context, Result, anyhow, bail};
+use perigee_net::{QuicServerListener, QuicTransportConfig, VpnInterfaceBinding};
 use std::future::Future;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
+
+/// Default UDP socket bind address for `perigee-host` (loopback-only).
+pub const DEFAULT_BIND_ADDR: &str = "127.0.0.1:4433";
+
+/// Default host node name reported by `perigee-host`.
+pub const DEFAULT_NODE_NAME: &str = "perigee-host-node";
+
+/// Usage text for `perigee-host --help`.
+pub const HOST_USAGE: &str = "\
+Usage: perigee-host [run] [OPTIONS]
+
+Options:
+  --bind <ADDR>         UDP socket bind address (default: 127.0.0.1:4433, loopback-only)
+  --interface <NAME>    Bind exclusively to network/VPN interface NAME (fails closed if missing)
+  --name <NODE>         Host node identifier (default: perigee-host-node)
+  -h, --help            Print this help text and exit
+  -V, --version         Print version information and exit
+
+Environment variables (overridden by CLI flags):
+  PERIGEE_BIND_ADDR       UDP socket bind address (default: 127.0.0.1:4433)
+  PERIGEE_BIND_INTERFACE  Network/VPN interface name to bind exclusively (fails closed)
+  PERIGEE_SMOKE_TEST      If set, exit cleanly right after binding the QUIC listener";
+
+/// Host daemon configuration resolved from defaults, environment variables, and CLI flags.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostOptions {
+    pub bind_addr: SocketAddr,
+    pub interface: Option<String>,
+    pub node_name: String,
+}
+
+impl Default for HostOptions {
+    fn default() -> Self {
+        Self {
+            bind_addr: DEFAULT_BIND_ADDR
+                .parse()
+                .expect("DEFAULT_BIND_ADDR is a valid SocketAddr"),
+            interface: None,
+            node_name: DEFAULT_NODE_NAME.to_string(),
+        }
+    }
+}
+
+impl HostOptions {
+    /// Builds [`HostOptions`] starting from [`HostOptions::default`] and applying
+    /// `PERIGEE_BIND_ADDR` and `PERIGEE_BIND_INTERFACE` from `get`.
+    pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<Self> {
+        let mut opts = Self::default();
+        if let Some(raw_addr) = get("PERIGEE_BIND_ADDR") {
+            opts.bind_addr = raw_addr
+                .parse()
+                .with_context(|| format!("invalid PERIGEE_BIND_ADDR '{raw_addr}'"))?;
+        }
+        if let Some(iface) = get("PERIGEE_BIND_INTERFACE")
+            && !iface.is_empty()
+        {
+            opts.interface = Some(iface);
+        }
+        Ok(opts)
+    }
+
+    /// Builds [`HostOptions`] from process environment variables.
+    pub fn from_env() -> Result<Self> {
+        Self::from_env_with(|k| std::env::var(k).ok())
+    }
+
+    /// Produces the [`QuicTransportConfig`] corresponding to `self.interface`.
+    pub fn transport_config(&self) -> QuicTransportConfig {
+        match &self.interface {
+            Some(name) => QuicTransportConfig {
+                interface_binding: VpnInterfaceBinding::InterfaceName(name.clone()),
+                ..Default::default()
+            },
+            None => QuicTransportConfig::default(),
+        }
+    }
+}
+
+/// Parsed command-line action for `perigee-host` (and `perigee host`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostCommand {
+    Run(HostOptions),
+    Help,
+    Version,
+}
+
+/// Parses `perigee-host` CLI arguments (`args` excludes the program name) on top of `base`.
+pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand> {
+    let mut opts = base;
+    let mut slice = args;
+    if slice.first().map(String::as_str) == Some("run") {
+        slice = &slice[1..];
+    }
+
+    let mut i = 0;
+    while i < slice.len() {
+        match slice[i].as_str() {
+            "-h" | "--help" => return Ok(HostCommand::Help),
+            "-V" | "--version" => return Ok(HostCommand::Version),
+            "--bind" => {
+                let val = slice
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow!("--bind needs a value"))?;
+                opts.bind_addr = val
+                    .parse()
+                    .with_context(|| format!("invalid --bind address '{val}'"))?;
+                i += 2;
+            }
+            "--interface" => {
+                let val = slice
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow!("--interface needs a value"))?;
+                if val.is_empty() {
+                    bail!("--interface needs a value");
+                }
+                opts.interface = Some(val.clone());
+                i += 2;
+            }
+            "--name" => {
+                let val = slice
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow!("--name needs a value"))?;
+                if val.is_empty() {
+                    bail!("--name needs a value");
+                }
+                opts.node_name = val.clone();
+                i += 2;
+            }
+            other => bail!("unknown argument '{other}'; run with --help"),
+        }
+    }
+
+    Ok(HostCommand::Run(opts))
+}
+
+/// Auto-detects the capture backend, constructs a [`PerigeeHostDaemon`], and binds a
+/// [`QuicServerListener`] according to `options`.
+pub fn bind_host(options: &HostOptions) -> Result<(Arc<PerigeeHostDaemon>, QuicServerListener)> {
+    let backend = PerigeeHostDaemon::auto_detect_backend();
+    let daemon = Arc::new(PerigeeHostDaemon::new(options.node_name.clone(), backend));
+    let listener = QuicServerListener::bind(options.bind_addr, options.transport_config())?;
+    info!(
+        local_addr = ?listener.local_addr()?,
+        backend = ?daemon.backend,
+        "Perigee Host Daemon listening for incoming QUIC connections"
+    );
+    Ok((daemon, listener))
+}
 
 /// Runs the host accept loop until `shutdown` resolves or the listener endpoint closes,
 /// then stops all active sessions and drains the QUIC endpoint.
@@ -217,5 +366,107 @@ mod tests {
             .expect("run_host timed out when endpoint closed")
             .expect("run_host task panicked");
         assert!(host_res.is_ok());
+    }
+
+    #[test]
+    fn test_host_options_defaults_and_env() {
+        let defaults = HostOptions::from_env_with(|_| None).unwrap();
+        assert_eq!(defaults, HostOptions::default());
+        assert_eq!(
+            defaults.bind_addr,
+            "127.0.0.1:4433".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(defaults.interface, None);
+        assert_eq!(defaults.node_name, DEFAULT_NODE_NAME);
+
+        let configured = HostOptions::from_env_with(|k| match k {
+            "PERIGEE_BIND_ADDR" => Some("192.0.2.10:5000".to_string()),
+            "PERIGEE_BIND_INTERFACE" => Some("wg0".to_string()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(
+            configured.bind_addr,
+            "192.0.2.10:5000".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(configured.interface, Some("wg0".to_string()));
+        assert_eq!(configured.node_name, DEFAULT_NODE_NAME);
+
+        let err = HostOptions::from_env_with(|k| match k {
+            "PERIGEE_BIND_ADDR" => Some("not-an-addr".to_string()),
+            _ => None,
+        })
+        .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("PERIGEE_BIND_ADDR"),
+            "Expected error containing PERIGEE_BIND_ADDR, got: {err_text}"
+        );
+    }
+
+    #[test]
+    fn test_parse_host_args() {
+        let base = HostOptions::default();
+
+        assert_eq!(
+            parse_host_args(&[], base.clone()).unwrap(),
+            HostCommand::Run(base.clone())
+        );
+
+        let args: Vec<String> = [
+            "run",
+            "--bind",
+            "192.0.2.10:5000",
+            "--interface",
+            "wg0",
+            "--name",
+            "lab",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        assert_eq!(
+            parse_host_args(&args, base.clone()).unwrap(),
+            HostCommand::Run(HostOptions {
+                bind_addr: "192.0.2.10:5000".parse().unwrap(),
+                interface: Some("wg0".to_string()),
+                node_name: "lab".to_string(),
+            })
+        );
+
+        assert_eq!(
+            parse_host_args(&["--help".to_string()], base.clone()).unwrap(),
+            HostCommand::Help
+        );
+        assert_eq!(
+            parse_host_args(&["-V".to_string()], base.clone()).unwrap(),
+            HostCommand::Version
+        );
+
+        assert!(parse_host_args(&["--bind".to_string()], base.clone()).is_err());
+
+        let unknown_err = parse_host_args(&["--frobnicate".to_string()], base).unwrap_err();
+        assert!(
+            unknown_err.to_string().contains("unknown argument"),
+            "Expected error containing 'unknown argument', got: {unknown_err}"
+        );
+    }
+
+    #[test]
+    fn test_transport_config_follows_interface() {
+        let default_opts = HostOptions::default();
+        assert_eq!(
+            default_opts.transport_config().interface_binding,
+            VpnInterfaceBinding::DefaultSystemRoute
+        );
+
+        let iface_opts = HostOptions {
+            interface: Some("wg0".to_string()),
+            ..HostOptions::default()
+        };
+        assert_eq!(
+            iface_opts.transport_config().interface_binding,
+            VpnInterfaceBinding::InterfaceName("wg0".to_string())
+        );
     }
 }
