@@ -19,6 +19,9 @@ use perigee_protocol::{
 use crate::audio::ClientAudioBuffer;
 use crate::render::DecodedFrameSurface;
 
+/// Upper bound on frame IDs listed in one `LossReport`; a larger gap still forces a keyframe.
+pub const MAX_LOSS_REPORT_FRAMES: usize = 64;
+
 /// Session configuration options supplied during viewer initialization.
 #[derive(Debug, Clone)]
 pub struct SessionConfig {
@@ -198,21 +201,30 @@ impl ClientSessionPipeline {
                     let payload_len = frame.payload.len() as u64;
 
                     // Detect sequence gaps and emit instant LossReport for IDR keyframe recovery
-                    if let Some(expected) = expected_frame_id
-                        && frame_idx > expected
-                    {
-                        let missing: Vec<u64> = (expected..frame_idx).collect();
-                        warn!(
-                            ?missing,
-                            "Detected video frame sequence gap; sending LossReport"
-                        );
-                        let _ = wire_tx_feedback
-                            .send(WireMessage::Control(ControlMessage::LossReport {
-                                missing_frames: missing,
-                            }))
-                            .await;
+                    if let Some(expected) = expected_frame_id {
+                        if frame_idx > expected {
+                            let missing = (expected..frame_idx)
+                                .take(MAX_LOSS_REPORT_FRAMES)
+                                .collect::<Vec<u64>>();
+                            warn!(
+                                gap = frame_idx - expected,
+                                reported = missing.len(),
+                                "Detected video frame sequence gap; sending LossReport"
+                            );
+                            let _ = wire_tx_feedback
+                                .send(WireMessage::Control(ControlMessage::LossReport {
+                                    missing_frames: missing,
+                                }))
+                                .await;
+                        } else if frame_idx < expected {
+                            debug!(frame_idx, expected, "late or duplicate video frame");
+                        }
                     }
-                    expected_frame_id = Some(frame_idx + 1);
+                    expected_frame_id = Some(
+                        expected_frame_id
+                            .unwrap_or(0)
+                            .max(frame_idx.saturating_add(1)),
+                    );
 
                     let decode_start = Instant::now();
                     let decoded_surface = DecodedFrameSurface {
@@ -545,5 +557,158 @@ mod tests {
 
         let m = pipeline.metrics.lock().await;
         assert!((m.rtt_ms - 4.25).abs() < f32::EPSILON);
+    }
+
+    fn make_test_video_frame(frame_id: u64) -> WireMessage {
+        WireMessage::Video(VideoFrameMessage {
+            frame_id,
+            monitor_id: 1,
+            timestamp_us: 1000,
+            codec: VideoCodec::AV1,
+            is_keyframe: frame_id == 1,
+            width: 1920,
+            height: 1080,
+            stride: 1920 * 4,
+            format: PixelFormat::Bgra8,
+            payload: vec![0xAA; 64],
+        })
+    }
+
+    #[tokio::test]
+    async fn test_loss_report_is_bounded() {
+        let (host_to_client_tx, host_to_client_rx) = mpsc::channel(32);
+        let (client_to_host_tx, mut client_to_host_rx) = mpsc::channel(32);
+
+        let (_pipeline, _state_rx, mut video_rx, _input_tx) = ClientSessionPipeline::spawn(
+            SessionConfig::default(),
+            host_to_client_rx,
+            client_to_host_tx,
+        );
+
+        let hello = client_to_host_rx.recv().await.unwrap();
+        assert!(matches!(
+            hello,
+            WireMessage::Handshake(HandshakeMessage::ClientHello { .. })
+        ));
+
+        host_to_client_tx
+            .send(make_test_video_frame(1))
+            .await
+            .unwrap();
+        let _ = video_rx.recv().await.unwrap();
+        let ack_1 = client_to_host_rx.recv().await.unwrap();
+        assert!(matches!(
+            ack_1,
+            WireMessage::Control(ControlMessage::FrameAck { frame_id: 1, .. })
+        ));
+
+        host_to_client_tx
+            .send(make_test_video_frame(1_000_000))
+            .await
+            .unwrap();
+        let _ = video_rx.recv().await.unwrap();
+
+        let loss_msg = client_to_host_rx.recv().await.unwrap();
+        match loss_msg {
+            WireMessage::Control(ControlMessage::LossReport { missing_frames }) => {
+                assert_eq!(missing_frames.len(), MAX_LOSS_REPORT_FRAMES);
+                assert_eq!(missing_frames[0], 2);
+            }
+            other => panic!("expected LossReport, got {other:?}"),
+        }
+
+        let ack_big = client_to_host_rx.recv().await.unwrap();
+        assert!(matches!(
+            ack_big,
+            WireMessage::Control(ControlMessage::FrameAck {
+                frame_id: 1_000_000,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_out_of_order_frame_does_not_rewind() {
+        let (host_to_client_tx, host_to_client_rx) = mpsc::channel(32);
+        let (client_to_host_tx, mut client_to_host_rx) = mpsc::channel(32);
+
+        let (_pipeline, _state_rx, mut video_rx, _input_tx) = ClientSessionPipeline::spawn(
+            SessionConfig::default(),
+            host_to_client_rx,
+            client_to_host_tx,
+        );
+
+        let hello = client_to_host_rx.recv().await.unwrap();
+        assert!(matches!(
+            hello,
+            WireMessage::Handshake(HandshakeMessage::ClientHello { .. })
+        ));
+
+        for frame_id in [1, 3, 2, 4] {
+            host_to_client_tx
+                .send(make_test_video_frame(frame_id))
+                .await
+                .unwrap();
+            let decoded = video_rx.recv().await.unwrap();
+            assert_eq!(decoded.frame_index, frame_id);
+        }
+
+        let mut loss_reports = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(1), async {
+            while let Some(msg) = client_to_host_rx.recv().await {
+                if let WireMessage::Control(ControlMessage::LossReport { missing_frames }) = msg {
+                    loss_reports.push(missing_frames);
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(loss_reports, vec![vec![2]]);
+    }
+
+    #[tokio::test]
+    async fn test_max_frame_id_does_not_overflow() {
+        let (host_to_client_tx, host_to_client_rx) = mpsc::channel(32);
+        let (client_to_host_tx, mut client_to_host_rx) = mpsc::channel(32);
+
+        let (_pipeline, _state_rx, mut video_rx, _input_tx) = ClientSessionPipeline::spawn(
+            SessionConfig::default(),
+            host_to_client_rx,
+            client_to_host_tx,
+        );
+
+        let hello = client_to_host_rx.recv().await.unwrap();
+        assert!(matches!(
+            hello,
+            WireMessage::Handshake(HandshakeMessage::ClientHello { .. })
+        ));
+
+        for frame_id in [u64::MAX, 5] {
+            host_to_client_tx
+                .send(make_test_video_frame(frame_id))
+                .await
+                .unwrap();
+            let decoded = video_rx.recv().await.unwrap();
+            assert_eq!(decoded.frame_index, frame_id);
+        }
+
+        for expected_ack_id in [u64::MAX, 5] {
+            let msg = client_to_host_rx.recv().await.unwrap();
+            assert_eq!(
+                msg,
+                WireMessage::Control(ControlMessage::FrameAck {
+                    frame_id: expected_ack_id,
+                    monitor_id: 1,
+                    render_delay_us: match msg {
+                        WireMessage::Control(ControlMessage::FrameAck {
+                            render_delay_us, ..
+                        }) => render_delay_us,
+                        _ => 0,
+                    },
+                })
+            );
+        }
+
+        assert!(client_to_host_rx.try_recv().is_err());
     }
 }
