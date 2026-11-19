@@ -1,0 +1,15 @@
+[scope]
+id = "perigee_protocol"
+target = "crates/perigee-protocol"
+tech_stack = ["rust"]
+description = "Promoted from component 'perigee-protocol' (crates/perigee-protocol)"
+bound_component = "perigee_protocol"
+tracked_files = [
+    "crates/perigee-protocol/Cargo.toml",
+    "crates/perigee-protocol/src/lib.rs",
+    "crates/perigee-protocol/tests/wire_tests.rs",
+]
+
+[items]
+bugs = []
+features = []

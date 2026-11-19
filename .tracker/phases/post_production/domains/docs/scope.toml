@@ -1,0 +1,26 @@
+[scope]
+id = "docs"
+target = "docs"
+tech_stack = []
+description = "Promoted from component 'docs' (docs)"
+bound_component = "docs"
+tracked_files = [
+    "docs/audit/01-baseline.md",
+    "docs/audit/02-protocol-common.md",
+    "docs/audit/03-net.md",
+    "docs/audit/04-daemon-auth-lifecycle.md",
+    "docs/audit/05-channels-oob.md",
+    "docs/audit/06-file-transfer-st.md",
+    "docs/audit/07-media-backends.md",
+    "docs/audit/08-client.md",
+    "docs/audit/09-ui-coupling.md",
+    "docs/audit/10-repo-packaging.md",
+    "docs/audit/11-traceability.md",
+    "docs/audit/12-claude-validation.md",
+    "docs/audit/13-evaluation.md",
+    "docs/audit/README.md",
+]
+
+[items]
+bugs = []
+features = []

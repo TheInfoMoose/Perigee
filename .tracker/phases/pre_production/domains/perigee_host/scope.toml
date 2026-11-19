@@ -1,0 +1,51 @@
+[scope]
+id = "perigee_host"
+target = "crates/perigee-host"
+tech_stack = ["rust"]
+description = "Promoted from component 'perigee-host' (crates/perigee-host)"
+bound_component = "perigee_host"
+tracked_files = [
+    "crates/perigee-host/Cargo.toml",
+    "crates/perigee-host/src/audio.rs",
+    "crates/perigee-host/src/backends/linux_capture.rs",
+    "crates/perigee-host/src/backends/linux_input.rs",
+    "crates/perigee-host/src/backends/macos.rs",
+    "crates/perigee-host/src/backends/mod.rs",
+    "crates/perigee-host/src/backends/windows.rs",
+    "crates/perigee-host/src/daemon.rs",
+    "crates/perigee-host/src/encoder.rs",
+    "crates/perigee-host/src/host.rs",
+    "crates/perigee-host/src/lib.rs",
+    "crates/perigee-host/src/main.rs",
+]
+
+[items]
+features = []
+
+[[items.bugs]]
+id = "BUG-0003"
+title = "Parse host args before reading environment options"
+status = "pending"
+severity = "low"
+created_at = "2026-11-19T01:59:16Z"
+
+[[items.tasks]]
+id = "TASK-0002"
+title = "Research headless capture and cosmic-greeter seat following"
+status = "pending"
+severity = "medium"
+created_at = "2026-11-19T01:59:16Z"
+
+[[items.tasks]]
+id = "TASK-0033"
+title = "Host hardening. POST_GATE exit 0. Diff matches MUTATION_SPEC 1–5: saturating bitrate_kbps_from_bytes_per_sec, LossReport logs len/first/last, AuthResponse send failure calls terminate_session before returning, shutdown_signal falls back to Ctrl-C instead of expect, two new tests"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0035"
+title = "Host options + CLI args. POST_GATE exit 0 (incl. smoke run with --bind 127.0.0.1:0 and --help). Diff matches MUTATION_SPEC 1–4: constants, HostOptions (from_env_with/from_env/transport_config), HostCommand, parse_host_args, HOST_USAGE, bind_host; main.rs delegates; three tests. One non-test .expect in HostOptions::default() parses a constant (infallible)"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"

@@ -1,0 +1,24 @@
+schema_version = 2
+
+[item]
+id = "TASK-0036"
+type = "task"
+title = "Client connect API. POST_GATE exit 0. Diff matches MUTATION_SPEC 1–4: connect.rs (constants, resolve_host_addr identical to the UI resolver, parse_interface_binding, ConnectOptions, ClientSession, connect waits for Active/Terminated/timeout and stops + closes on every failure path); session.rs Connecting→Authenticating via send_if_modified, rejected AuthResponse → Terminated, NegotiatingTopology removed; five new tests; existing pipeline test waits for Authenticating instead of asserting Connecting"
+status = "closed"
+severity = "medium"
+scope_ref = "perigee_client"
+created_at = "2026-11-19T01:59:36Z"
+updated_at = "2026-11-19T01:59:36Z"
+source_ref = "STEP 3D"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+
+[[history.previous_fixes]]
+date = "2026-11-19"
+commit = "7df9dbd"
+summary = "Completed per plan roadmap"

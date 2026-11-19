@@ -1,0 +1,17 @@
+[scope]
+id = "simply_transfer_snapshots"
+target = "vendor/ST_Rust_Age/simply-transfer-snapshots"
+tech_stack = ["rust"]
+description = "Promoted from component 'simply-transfer-snapshots' (vendor/ST_Rust_Age/simply-transfer-snapshots)"
+bound_component = "simply_transfer_snapshots"
+tracked_files = [
+    "vendor/ST_Rust_Age/simply-transfer-snapshots/Cargo.toml",
+    "vendor/ST_Rust_Age/simply-transfer-snapshots/src/lib.rs",
+    "vendor/ST_Rust_Age/simply-transfer-snapshots/src/linux.rs",
+    "vendor/ST_Rust_Age/simply-transfer-snapshots/src/macos.rs",
+    "vendor/ST_Rust_Age/simply-transfer-snapshots/src/windows.rs",
+]
+
+[items]
+bugs = []
+features = []

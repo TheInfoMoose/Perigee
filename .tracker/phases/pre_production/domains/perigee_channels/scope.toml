@@ -1,0 +1,15 @@
+[scope]
+id = "perigee_channels"
+target = "crates/perigee-channels"
+tech_stack = ["rust"]
+description = "Promoted from component 'perigee-channels' (crates/perigee-channels)"
+bound_component = "perigee_channels"
+tracked_files = [
+    "crates/perigee-channels/Cargo.toml",
+    "crates/perigee-channels/src/clipboard.rs",
+    "crates/perigee-channels/src/lib.rs",
+]
+
+[items]
+bugs = []
+features = []

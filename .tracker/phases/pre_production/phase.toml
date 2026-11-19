@@ -1,0 +1,89 @@
+[phase]
+id = "pre_production"
+title = "Pre-Production"
+status = "in_progress"
+start_date = "2026-11-18"
+
+[[scopes.manifest]]
+id = "inbox"
+type = "inbox"
+path = "domains/inbox"
+
+[[scopes.manifest]]
+id = "cosmic_config"
+type = "rust_crate"
+path = "domains/cosmic_config"
+
+[[scopes.manifest]]
+id = "docs"
+type = "custom"
+path = "domains/docs"
+
+[[scopes.manifest]]
+id = "libcosmic"
+type = "rust_crate"
+path = "domains/libcosmic"
+
+[[scopes.manifest]]
+id = "packaging"
+type = "build_scripts"
+path = "domains/packaging"
+
+[[scopes.manifest]]
+id = "perigee_channels"
+type = "rust_crate"
+path = "domains/perigee_channels"
+
+[[scopes.manifest]]
+id = "perigee_client"
+type = "rust_crate"
+path = "domains/perigee_client"
+
+[[scopes.manifest]]
+id = "perigee_common"
+type = "rust_crate"
+path = "domains/perigee_common"
+
+[[scopes.manifest]]
+id = "perigee_host"
+type = "rust_crate"
+path = "domains/perigee_host"
+
+[[scopes.manifest]]
+id = "perigee_net"
+type = "rust_crate"
+path = "domains/perigee_net"
+
+[[scopes.manifest]]
+id = "perigee_protocol"
+type = "rust_crate"
+path = "domains/perigee_protocol"
+
+[[scopes.manifest]]
+id = "perigee_ui"
+type = "rust_crate"
+path = "domains/perigee_ui"
+
+[[scopes.manifest]]
+id = "scripts"
+type = "build_scripts"
+path = "domains/scripts"
+
+[[scopes.manifest]]
+id = "simply_transfer_core"
+type = "rust_crate"
+path = "domains/simply_transfer_core"
+
+[[scopes.manifest]]
+id = "simply_transfer_crypto"
+type = "rust_crate"
+path = "domains/simply_transfer_crypto"
+
+[[scopes.manifest]]
+id = "simply_transfer_snapshots"
+type = "rust_crate"
+path = "domains/simply_transfer_snapshots"
+
+[summary]
+total_items = 40
+completed_items = 32

@@ -1,0 +1,17 @@
+[scope]
+id = "simply_transfer_crypto"
+target = "vendor/ST_Rust_Age/simply-transfer-crypto"
+tech_stack = ["rust"]
+description = "Promoted from component 'simply-transfer-crypto' (vendor/ST_Rust_Age/simply-transfer-crypto)"
+bound_component = "simply_transfer_crypto"
+tracked_files = [
+    "vendor/ST_Rust_Age/simply-transfer-crypto/Cargo.toml",
+    "vendor/ST_Rust_Age/simply-transfer-crypto/src/hash.rs",
+    "vendor/ST_Rust_Age/simply-transfer-crypto/src/keys.rs",
+    "vendor/ST_Rust_Age/simply-transfer-crypto/src/lib.rs",
+    "vendor/ST_Rust_Age/simply-transfer-crypto/src/token.rs",
+]
+
+[items]
+bugs = []
+features = []

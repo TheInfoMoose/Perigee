@@ -1,0 +1,24 @@
+schema_version = 2
+
+[item]
+id = "TASK-0026"
+type = "task"
+title = 'Session reaper. POST_GATE exit 0. Diff matches MUTATION_SPEC 1–4: reaper selects on wait_for(stopped) / connection.closed(), removes from registry, closes with "session ended"; datagram + bi loops stop only when close_reason() is set, otherwise log at debug and continue; loopback test now polls for removal; client-close test added. Parked 2F leak (daemon.rs AuthResponse send) is still open: reaper is spawned after that send'
+status = "closed"
+severity = "medium"
+scope_ref = "inbox"
+created_at = "2026-11-19T01:59:36Z"
+updated_at = "2026-11-19T01:59:36Z"
+source_ref = "STEP 2G"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+
+[[history.previous_fixes]]
+date = "2026-11-19"
+commit = "7df9dbd"
+summary = "Completed per plan roadmap"

@@ -1,0 +1,24 @@
+schema_version = 2
+
+[item]
+id = "TASK-0014"
+type = "task"
+title = "Client report. POST_GATE exit 0. Spot-checked CLI-03 (WgpuRenderPipeline holds no wgpu handles; request_device only after #[cfg(test)] at render.rs:784), CLI-08 (unbounded collect() + frame_idx + 1 at session.rs:204,215), CLI-09 (stop() only flips a flag), e2e test builds its own AuthRequest"
+status = "closed"
+severity = "medium"
+scope_ref = "docs"
+created_at = "2026-11-19T01:59:36Z"
+updated_at = "2026-11-19T01:59:36Z"
+source_ref = "STEP 1H"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+
+[[history.previous_fixes]]
+date = "2026-11-19"
+commit = "7df9dbd"
+summary = "Completed per plan roadmap"

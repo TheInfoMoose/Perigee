@@ -1,0 +1,24 @@
+schema_version = 2
+
+[item]
+id = "TASK-0027"
+type = "task"
+title = "Host loop + signals. POST_GATE exit 0 incl. smoke test. Diff matches MUTATION_SPEC 1–6: biased select on shutdown vs accept; shutdown_all_sessions → endpoint close → 2 s wait_idle; SIGINT/SIGTERM; default 127.0.0.1:4433; RFERRAM_BIND_INTERFACE; both service files drop 0.0.0.0; both tests assert what the spec asks"
+status = "closed"
+severity = "medium"
+scope_ref = "packaging"
+created_at = "2026-11-19T01:59:36Z"
+updated_at = "2026-11-19T01:59:36Z"
+source_ref = "STEP 2H"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+
+[[history.previous_fixes]]
+date = "2026-11-19"
+commit = "7df9dbd"
+summary = "Completed per plan roadmap"

@@ -1,0 +1,24 @@
+schema_version = 2
+
+[item]
+id = "TASK-0031"
+type = "task"
+title = "Packaging/CI rename. POST_GATE exit 0 incl. bash -n on packaging scripts. 18 renames (icons byte-identical, R100) + 9 modified. Normalized diff: only names change, plus WiX ServerExecutable→HostExecutable component ID (GUID kept, no other refs). Packaging builds and WiX not exercised locally"
+status = "closed"
+severity = "medium"
+scope_ref = "packaging"
+created_at = "2026-11-19T01:59:36Z"
+updated_at = "2026-11-19T01:59:36Z"
+source_ref = "STEP 2L"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+
+[[history.previous_fixes]]
+date = "2026-11-19"
+commit = "7df9dbd"
+summary = "Completed per plan roadmap"

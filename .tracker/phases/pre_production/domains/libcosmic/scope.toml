@@ -1,0 +1,31 @@
+[scope]
+id = "libcosmic"
+target = "vendor/libcosmic"
+tech_stack = ["rust"]
+description = "Promoted from component 'libcosmic' (vendor/libcosmic)"
+bound_component = "libcosmic"
+tracked_files = [
+    "vendor/libcosmic/Cargo.toml",
+    "vendor/libcosmic/src/layout.rs",
+    "vendor/libcosmic/src/lib.rs",
+    "vendor/libcosmic/src/raster.rs",
+    "vendor/libcosmic/src/runner.rs",
+]
+
+[items]
+bugs = []
+features = []
+
+[[items.tasks]]
+id = "TASK-0029"
+title = "Reserved placeholders. POST_GATE exit 0. Diff matches MUTATION_SPEC 1–5: distinct 192.0.2.x per literal, ports kept; /tmp/rferram-test/... paths; testuser fixtures; runner.rs edit sequence recomputed (caret 10, backspace/delete results correct); app.rs caret string is still 15 chars so caret assertions hold"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0030"
+title = "Rust rename to Perigee. POST_GATE exit 0 incl. PERIGEE_SMOKE_TEST. 50 paths (45 renames + 5 modified). Normalized diff (rferram/perigee folded, server→host) leaves only rustfmt import reorders and one description cleanup: no logic change. Lockfile: exactly the 7 member names swapped. Test attributes 120 → 120; 101 passed, 0 failed. repository URL and ST patch table unchanged"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"

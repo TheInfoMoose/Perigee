@@ -1,0 +1,24 @@
+schema_version = 2
+
+[item]
+id = "TASK-0034"
+type = "task"
+title = "Client loss-report bounds. POST_GATE exit 0. Diff matches MUTATION_SPEC 1–3: MAX_LOSS_REPORT_FRAMES = 64 with take(), warn logs gap/reported counts, late frames log at debug only, expected ID uses max(.., saturating_add(1)); three new tests (1→1,000,000 gives 64 IDs from 2; 1,3,2,4 gives one report [2]; u64::MAX then 5 gives no report)"
+status = "closed"
+severity = "medium"
+scope_ref = "perigee_client"
+created_at = "2026-11-19T01:59:36Z"
+updated_at = "2026-11-19T01:59:36Z"
+source_ref = "STEP 3B"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+
+[[history.previous_fixes]]
+date = "2026-11-19"
+commit = "7df9dbd"
+summary = "Completed per plan roadmap"

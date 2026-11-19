@@ -1,0 +1,17 @@
+[scope]
+id = "perigee_common"
+target = "crates/perigee-common"
+tech_stack = ["rust"]
+description = "Promoted from component 'perigee-common' (crates/perigee-common)"
+bound_component = "perigee_common"
+tracked_files = [
+    "crates/perigee-common/Cargo.toml",
+    "crates/perigee-common/src/env.rs",
+    "crates/perigee-common/src/lib.rs",
+    "crates/perigee-common/src/models.rs",
+    "crates/perigee-common/src/vault.rs",
+]
+
+[items]
+bugs = []
+features = []

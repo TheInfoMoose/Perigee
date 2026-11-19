@@ -1,0 +1,14 @@
+[scope]
+id = "cosmic_config"
+target = "vendor/libcosmic/cosmic-config"
+tech_stack = ["rust"]
+description = "Promoted from component 'cosmic-config' (vendor/libcosmic/cosmic-config)"
+bound_component = "cosmic_config"
+tracked_files = [
+    "vendor/libcosmic/cosmic-config/Cargo.toml",
+    "vendor/libcosmic/cosmic-config/src/lib.rs",
+]
+
+[items]
+bugs = []
+features = []

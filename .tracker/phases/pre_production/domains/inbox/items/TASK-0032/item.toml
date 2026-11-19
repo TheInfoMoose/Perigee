@@ -1,0 +1,24 @@
+schema_version = 2
+
+[item]
+id = "TASK-0032"
+type = "task"
+title = "Docs + skills rename. POST_GATE exit 0. Strike 1: README claimed the client decode returns RGBA buffers; correction 1 fixed it to say the payload is forwarded undecoded. Skills renamed, absolute paths gone, verify-crate.sh uses rev-parse --show-toplevel, AGENTS/CONTRIBUTING gates match; README status rows checked against audit 11/13"
+status = "closed"
+severity = "medium"
+scope_ref = "inbox"
+created_at = "2026-11-19T01:59:36Z"
+updated_at = "2026-11-19T01:59:36Z"
+source_ref = "STEP 2M"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+
+[[history.previous_fixes]]
+date = "2026-11-19"
+commit = "7df9dbd"
+summary = "Completed per plan roadmap"

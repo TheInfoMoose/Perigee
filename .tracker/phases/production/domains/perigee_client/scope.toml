@@ -1,0 +1,19 @@
+[scope]
+id = "perigee_client"
+target = "crates/perigee-client"
+tech_stack = ["rust"]
+description = "Promoted from component 'perigee-client' (crates/perigee-client)"
+bound_component = "perigee_client"
+tracked_files = [
+    "crates/perigee-client/Cargo.toml",
+    "crates/perigee-client/src/audio.rs",
+    "crates/perigee-client/src/bridge.rs",
+    "crates/perigee-client/src/lib.rs",
+    "crates/perigee-client/src/render.rs",
+    "crates/perigee-client/src/session.rs",
+    "crates/perigee-client/tests/e2e_loopback.rs",
+]
+
+[items]
+bugs = []
+features = []

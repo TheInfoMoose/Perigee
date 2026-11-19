@@ -1,0 +1,17 @@
+[scope]
+id = "libcosmic"
+target = "vendor/libcosmic"
+tech_stack = ["rust"]
+description = "Promoted from component 'libcosmic' (vendor/libcosmic)"
+bound_component = "libcosmic"
+tracked_files = [
+    "vendor/libcosmic/Cargo.toml",
+    "vendor/libcosmic/src/layout.rs",
+    "vendor/libcosmic/src/lib.rs",
+    "vendor/libcosmic/src/raster.rs",
+    "vendor/libcosmic/src/runner.rs",
+]
+
+[items]
+bugs = []
+features = []

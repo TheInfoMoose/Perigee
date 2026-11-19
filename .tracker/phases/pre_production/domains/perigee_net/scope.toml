@@ -1,0 +1,19 @@
+[scope]
+id = "perigee_net"
+target = "crates/perigee-net"
+tech_stack = ["rust"]
+description = "Promoted from component 'perigee-net' (crates/perigee-net)"
+bound_component = "perigee_net"
+tracked_files = [
+    "crates/perigee-net/Cargo.toml",
+    "crates/perigee-net/src/endpoint.rs",
+    "crates/perigee-net/src/lib.rs",
+    "crates/perigee-net/src/manager.rs",
+    "crates/perigee-net/src/metrics.rs",
+    "crates/perigee-net/src/socket.rs",
+    "crates/perigee-net/tests/quic_tests.rs",
+]
+
+[items]
+bugs = []
+features = []

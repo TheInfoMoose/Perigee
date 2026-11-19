@@ -1,0 +1,27 @@
+[scope]
+id = "perigee_ui"
+target = "crates/perigee-ui"
+tech_stack = ["rust"]
+description = "Promoted from component 'perigee-ui' (crates/perigee-ui)"
+bound_component = "perigee_ui"
+tracked_files = [
+    "crates/perigee-ui/Cargo.toml",
+    "crates/perigee-ui/src/app.rs",
+    "crates/perigee-ui/src/drawers.rs",
+    "crates/perigee-ui/src/lib.rs",
+    "crates/perigee-ui/src/main.rs",
+    "crates/perigee-ui/src/modal.rs",
+    "crates/perigee-ui/src/session_controller.rs",
+    "crates/perigee-ui/src/shader.rs",
+]
+
+[items]
+bugs = []
+features = []
+
+[[items.tasks]]
+id = "TASK-0003"
+title = "UI uses the client connect API"
+status = "open"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"

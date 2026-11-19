@@ -1,0 +1,60 @@
+[scope]
+id = "perigee_client"
+target = "crates/perigee-client"
+tech_stack = ["rust"]
+description = "Promoted from component 'perigee-client' (crates/perigee-client)"
+bound_component = "perigee_client"
+tracked_files = [
+    "crates/perigee-client/Cargo.toml",
+    "crates/perigee-client/src/audio.rs",
+    "crates/perigee-client/src/bridge.rs",
+    "crates/perigee-client/src/lib.rs",
+    "crates/perigee-client/src/render.rs",
+    "crates/perigee-client/src/session.rs",
+    "crates/perigee-client/tests/e2e_loopback.rs",
+]
+
+[items]
+features = []
+
+[[items.bugs]]
+id = "BUG-0001"
+title = "Await Disconnect delivery instead of sleeping 20 ms"
+status = "pending"
+severity = "medium"
+created_at = "2026-11-19T01:59:16Z"
+
+[[items.bugs]]
+id = "BUG-0002"
+title = "Log LossReport size, not the full missing_frames list"
+status = "pending"
+severity = "low"
+created_at = "2026-11-19T01:59:16Z"
+
+[[items.tasks]]
+id = "TASK-0005"
+title = "Real host ↔ client loopback test; README"
+status = "open"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0034"
+title = "Client loss-report bounds. POST_GATE exit 0. Diff matches MUTATION_SPEC 1–3: MAX_LOSS_REPORT_FRAMES = 64 with take(), warn logs gap/reported counts, late frames log at debug only, expected ID uses max(.., saturating_add(1)); three new tests (1→1,000,000 gives 64 IDs from 2; 1,3,2,4 gives one report [2]; u64::MAX then 5 gives no report)"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0036"
+title = "Client connect API. POST_GATE exit 0. Diff matches MUTATION_SPEC 1–4: connect.rs (constants, resolve_host_addr identical to the UI resolver, parse_interface_binding, ConnectOptions, ClientSession, connect waits for Active/Terminated/timeout and stops + closes on every failure path); session.rs Connecting→Authenticating via send_if_modified, rejected AuthResponse → Terminated, NegotiatingTopology removed; five new tests; existing pipeline test waits for Authenticating instead of asserting Connecting"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0037"
+title = 'Client teardown. POST_GATE exit 0. Diff matches MUTATION_SPEC 1–5: pipeline + bridge store JoinHandles, close watcher sets Terminated("connection closed: …"), disconnect sends Disconnect (1 s bound), stops, closes, sets Terminated, joins under 2 s then aborts; tasks_finished with drained; connect failure paths use disconnect. Beyond spec but in scope: outbound pump also exits on closed(), demux/input tasks exit on Terminated, disconnect_lock serialises concurrent calls. Three new tests'
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"

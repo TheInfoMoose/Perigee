@@ -1,0 +1,35 @@
+[scope]
+id = "packaging"
+target = "packaging"
+tech_stack = ["shell"]
+description = "Promoted from component 'packaging' (packaging)"
+bound_component = "packaging"
+tracked_files = [
+    "packaging/icons/hicolor/128x128/apps/com.theinfomoose.Perigee.png",
+    "packaging/icons/hicolor/16x16/apps/com.theinfomoose.Perigee.png",
+    "packaging/icons/hicolor/256x256/apps/com.theinfomoose.Perigee.png",
+    "packaging/icons/hicolor/32x32/apps/com.theinfomoose.Perigee.png",
+    "packaging/icons/hicolor/48x48/apps/com.theinfomoose.Perigee.png",
+    "packaging/icons/hicolor/512x512/apps/com.theinfomoose.Perigee.png",
+    "packaging/icons/hicolor/64x64/apps/com.theinfomoose.Perigee.png",
+    "packaging/icons/hicolor/scalable/apps/com.theinfomoose.Perigee-symbolic.svg",
+    "packaging/icons/perigee-1024.png",
+    "packaging/icons/perigee-symbolic.svg",
+    "packaging/icons/perigee.icns",
+    "packaging/icons/perigee.ico",
+    "packaging/icons/perigee.png",
+    "packaging/linux/AppRun",
+    "packaging/linux/com.theinfomoose.Perigee.desktop",
+    "packaging/linux/com.theinfomoose.Perigee.metainfo.xml",
+    "packaging/linux/package-linux.sh",
+    "packaging/linux/perigee-host.service",
+    "packaging/macos/Info.plist",
+    "packaging/macos/com.theinfomoose.perigee-host.plist",
+    "packaging/macos/package-macos.sh",
+    "packaging/windows/package-windows.ps1",
+    "packaging/windows/perigee.wxs",
+]
+
+[items]
+bugs = []
+features = []

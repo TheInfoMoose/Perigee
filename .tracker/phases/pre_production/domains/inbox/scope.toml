@@ -1,0 +1,93 @@
+[scope]
+id = "inbox"
+target = ".tracker"
+tech_stack = []
+description = "Default unscoped triage inbox"
+
+[items]
+bugs = []
+features = []
+
+[[items.tasks]]
+id = "TASK-0001"
+title = "Drop unused ST patch entries for core and snapshots"
+status = "pending"
+severity = "low"
+created_at = "2026-11-19T01:59:16Z"
+
+[[items.tasks]]
+id = "TASK-0004"
+title = "The perigee CLI binary"
+status = "open"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0006"
+title = "Validator copied, plan file placed + gitignored, docs/audit/ created"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0020"
+title = "Deleted the 10 stale root copies. POST_GATE exit 0. Pure deletions (2,438 lines); .gitignore kept; no references left outside docs/audit"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0021"
+title = "Channels cut to clipboard only. POST_GATE exit 0 (full workspace tests). Diff matches MUTATION_SPEC items 1–8; test edits confined to the named test modules; oversized tests use Clipboard Image with the same N. Lockfile: 88 packages removed, 0 added, 0 version changes (ssh-key lost its version suffix only)"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0022"
+title = "Unused deps pruned. POST_GATE exit 0. Diff matches MUTATION_SPEC 1–4 exactly; no remaining quinn_proto/libc::/windows_sys uses; rferram-common only used by net/client tests. Lockfile: fastbloom, siphasher removed (quinn-proto feature set), 0 added, 0 version changes. windows-sys removal is compile-checked only by CI"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0023"
+title = "Fail-closed socket bind. POST_GATE exit 0. Diff matches MUTATION_SPEC 1–6: reuse flags gone; socket domain taken from the address actually bound; both InterfaceName paths return refusing to fall back instead of binding bind_addr; lo/lo0 test gated per OS; two new tests. macOS/Windows paths compile-checked by CI only"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0024"
+title = "Accept loop survives bad handshakes. POST_GATE exit 0. Diff matches MUTATION_SPEC 1–4: while let over endpoint.accept(), failures logged at warn with remote address, None only after close; renamed ALPN test now proves a valid client is accepted after the bad one; close test added"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0025"
+title = "Capture errors stop the session. POST_GATE exit 0. Diff matches MUTATION_SPEC 1–6; fallback capturer and synthetic frame deleted; FailingCapturer test proves stop. Gemini moved provision_session ahead of the success AuthResponse (needed so item 5's failure reply isn't sent after a success) — accepted"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0026"
+title = 'Session reaper. POST_GATE exit 0. Diff matches MUTATION_SPEC 1–4: reaper selects on wait_for(stopped) / connection.closed(), removes from registry, closes with "session ended"; datagram + bi loops stop only when close_reason() is set, otherwise log at debug and continue; loopback test now polls for removal; client-close test added. Parked 2F leak (daemon.rs AuthResponse send) is still open: reaper is spawned after that send'
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0028"
+title = "Stand-in doc labels. POST_GATE exit 0 (incl. comment-only diff check). All 10 files carry //! Status: stand-in. with an accurate one-liner; zero-copy / HW-encode / Opus / playback / headless-CI claims removed. Read every changed line; Windows/macOS lines correctly say SendInput/CGEventPost are real but partial"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0032"
+title = "Docs + skills rename. POST_GATE exit 0. Strike 1: README claimed the client decode returns RGBA buffers; correction 1 fixed it to say the payload is forwarded undecoded. Skills renamed, absolute paths gone, verify-crate.sh uses rev-parse --show-toplevel, AGENTS/CONTRIBUTING gates match; README status rows checked against audit 11/13"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"

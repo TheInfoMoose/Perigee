@@ -1,0 +1,117 @@
+[scope]
+id = "docs"
+target = "docs"
+tech_stack = []
+description = "Promoted from component 'docs' (docs)"
+bound_component = "docs"
+tracked_files = [
+    "docs/audit/01-baseline.md",
+    "docs/audit/02-protocol-common.md",
+    "docs/audit/03-net.md",
+    "docs/audit/04-daemon-auth-lifecycle.md",
+    "docs/audit/05-channels-oob.md",
+    "docs/audit/06-file-transfer-st.md",
+    "docs/audit/07-media-backends.md",
+    "docs/audit/08-client.md",
+    "docs/audit/09-ui-coupling.md",
+    "docs/audit/10-repo-packaging.md",
+    "docs/audit/11-traceability.md",
+    "docs/audit/12-claude-validation.md",
+    "docs/audit/13-evaluation.md",
+    "docs/audit/README.md",
+]
+
+[items]
+bugs = []
+features = []
+
+[[items.tasks]]
+id = "TASK-0007"
+title = "Baseline report. POST_GATE exit 0. Spot-checked: link failure (no libxkbcommon.so dev symlink on this host), both RustSec advisories, encoder lines. rferram-server tests did not run here"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0008"
+title = "Protocol + common report. POST_GATE exit 0. Spot-checked COM-01 (vault key), COM-02 (challenge), PROTO-03 (LossReport range), PROTO-04 (handshake logged with Debug)"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0009"
+title = "Net transport report. POST_GATE exit 0. Spot-checked NET-01 (no-op signature verify), NET-03 (accept returns None on one bad handshake), NET-04/05 (reuse flags, fail-open bind), NET-11 (vault in $HOME/.simply-transfer)"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0010"
+title = "Daemon auth + lifecycle report. POST_GATE exit 0. Spot-checked AUTH-01 (bare ClientHello → session), AUTH-03 (non-empty password/token), cert-hash checks at daemon.rs:565-576 and :720-722, LIFE-01 (terminate only in dead Err branch), LIFE-08 (unchecked bytes_per_sec * 8); confirmed client sends only ClientHello"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0011"
+title = "OOB + channels report. POST_GATE exit 0. Spot-checked OOB-01 (no run_on_* anywhere), OOB-02 (data ingests any peer_id), OOB-03 (fixed seed), CLIP-02 (monitor never called; locks held across send), CH-01 (flag set; only tests read it), CH-03 (client logs channel payloads at INFO)"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0012"
+title = "File transfer + ST report. POST_GATE exit 0; ST_Rust_Age clean at efeaa92. FT-01..03 spot-checked. Gemini's sandbox couldn't read upstream ST, so its 2A–2G map was guessed; per user, Claude appended a labeled correction section with the real diff + commit map"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0013"
+title = "Media backends report. POST_GATE exit 0. Spot-checked all 4 constant-fill capture sites, X11 .max(fallback) upscaling, no xtest_fake_input call, hardcoded 2560x1440 in lib.rs:107-118, 10 unsafe sites. Claude ran cargo test -p rferram-server --all-targets --locked: 21 passed"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0014"
+title = "Client report. POST_GATE exit 0. Spot-checked CLI-03 (WgpuRenderPipeline holds no wgpu handles; request_device only after #[cfg(test)] at render.rs:784), CLI-08 (unbounded collect() + frame_idx + 1 at session.rs:204,215), CLI-09 (stop() only flips a flag), e2e test builds its own AuthRequest"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0015"
+title = "UI coupling report. POST_GATE exit 0. Spot-checked UI-04 (vendor/libcosmic/Cargo.toml deps are taffy/tiny-skia/winit/wgpu, no iced; 8,555 LOC; all 5 commits in-repo), UI-02 (init never calls with_persistence_config; only tests do), rferram-* class constants in layout.rs:18"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0016"
+title = "Repo/packaging report. POST_GATE exit 0. Spot-checked REPO-06 (systemd unit: no User=, root, CAP_SYS_ADMIN, 0.0.0.0), REPO-01 (10 root files; CI copy byte-identical), REPO-05 (no cargo test in release.yml), no <ServiceInstall>. Two sweep rows quoted nonexistent literals; Claude appended a labeled correction"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0017"
+title = "Traceability matrix. POST_GATE exit 0. Claude checked: all 102 finding IDs in 01–10 are cited and none are invented; per-report severity totals match the reports exactly. Uses both correction sections; flags a new contradiction (10's README table says audio is never sent; it is)"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0018"
+title = "Claude validation: 3 read-only subagents; 57 Critical/High quotes re-checked (56 OK, 1 drift, 0 wrong); 6 severities changed; adjusted totals 5/49/33/15"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0019"
+title = "Evaluation: go, rebuild in place, delete stand-ins first; per-crate verdicts; target structure; phase order; 12 decisions for the user"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"

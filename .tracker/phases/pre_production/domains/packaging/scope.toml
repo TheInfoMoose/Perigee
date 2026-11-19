@@ -1,0 +1,49 @@
+[scope]
+id = "packaging"
+target = "packaging"
+tech_stack = ["shell"]
+description = "Promoted from component 'packaging' (packaging)"
+bound_component = "packaging"
+tracked_files = [
+    "packaging/icons/hicolor/128x128/apps/com.theinfomoose.Perigee.png",
+    "packaging/icons/hicolor/16x16/apps/com.theinfomoose.Perigee.png",
+    "packaging/icons/hicolor/256x256/apps/com.theinfomoose.Perigee.png",
+    "packaging/icons/hicolor/32x32/apps/com.theinfomoose.Perigee.png",
+    "packaging/icons/hicolor/48x48/apps/com.theinfomoose.Perigee.png",
+    "packaging/icons/hicolor/512x512/apps/com.theinfomoose.Perigee.png",
+    "packaging/icons/hicolor/64x64/apps/com.theinfomoose.Perigee.png",
+    "packaging/icons/hicolor/scalable/apps/com.theinfomoose.Perigee-symbolic.svg",
+    "packaging/icons/perigee-1024.png",
+    "packaging/icons/perigee-symbolic.svg",
+    "packaging/icons/perigee.icns",
+    "packaging/icons/perigee.ico",
+    "packaging/icons/perigee.png",
+    "packaging/linux/AppRun",
+    "packaging/linux/com.theinfomoose.Perigee.desktop",
+    "packaging/linux/com.theinfomoose.Perigee.metainfo.xml",
+    "packaging/linux/package-linux.sh",
+    "packaging/linux/perigee-host.service",
+    "packaging/macos/Info.plist",
+    "packaging/macos/com.theinfomoose.perigee-host.plist",
+    "packaging/macos/package-macos.sh",
+    "packaging/windows/package-windows.ps1",
+    "packaging/windows/perigee.wxs",
+]
+
+[items]
+bugs = []
+features = []
+
+[[items.tasks]]
+id = "TASK-0027"
+title = "Host loop + signals. POST_GATE exit 0 incl. smoke test. Diff matches MUTATION_SPEC 1–6: biased select on shutdown vs accept; shutdown_all_sessions → endpoint close → 2 s wait_idle; SIGINT/SIGTERM; default 127.0.0.1:4433; RFERRAM_BIND_INTERFACE; both service files drop 0.0.0.0; both tests assert what the spec asks"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0031"
+title = "Packaging/CI rename. POST_GATE exit 0 incl. bash -n on packaging scripts. 18 renames (icons byte-identical, R100) + 9 modified. Normalized diff: only names change, plus WiX ServerExecutable→HostExecutable component ID (GUID kept, no other refs). Packaging builds and WiX not exercised locally"
+status = "closed"
+severity = "medium"
+created_at = "2026-11-19T01:59:36Z"

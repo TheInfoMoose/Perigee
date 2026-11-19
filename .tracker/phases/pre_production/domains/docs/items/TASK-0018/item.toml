@@ -1,0 +1,24 @@
+schema_version = 2
+
+[item]
+id = "TASK-0018"
+type = "task"
+title = "Claude validation: 3 read-only subagents; 57 Critical/High quotes re-checked (56 OK, 1 drift, 0 wrong); 6 severities changed; adjusted totals 5/49/33/15"
+status = "closed"
+severity = "medium"
+scope_ref = "docs"
+created_at = "2026-11-19T01:59:36Z"
+updated_at = "2026-11-19T01:59:36Z"
+source_ref = "[CLAUDE] STEP 2"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+
+[[history.previous_fixes]]
+date = "2026-11-19"
+commit = "7df9dbd"
+summary = "Completed per plan roadmap"

@@ -1,0 +1,21 @@
+[scope]
+id = "simply_transfer_core"
+target = "vendor/ST_Rust_Age/simply-transfer-core"
+tech_stack = ["rust"]
+description = "Promoted from component 'simply-transfer-core' (vendor/ST_Rust_Age/simply-transfer-core)"
+bound_component = "simply_transfer_core"
+tracked_files = [
+    "vendor/ST_Rust_Age/simply-transfer-core/Cargo.toml",
+    "vendor/ST_Rust_Age/simply-transfer-core/src/engine.rs",
+    "vendor/ST_Rust_Age/simply-transfer-core/src/firewall.rs",
+    "vendor/ST_Rust_Age/simply-transfer-core/src/lib.rs",
+    "vendor/ST_Rust_Age/simply-transfer-core/src/registry.rs",
+    "vendor/ST_Rust_Age/simply-transfer-core/src/russh_client.rs",
+    "vendor/ST_Rust_Age/simply-transfer-core/src/russh_server.rs",
+    "vendor/ST_Rust_Age/simply-transfer-core/src/ssh.rs",
+    "vendor/ST_Rust_Age/simply-transfer-core/src/ssh_server.rs",
+]
+
+[items]
+bugs = []
+features = []

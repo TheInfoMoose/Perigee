@@ -1,0 +1,24 @@
+schema_version = 2
+
+[item]
+id = "TASK-0033"
+type = "task"
+title = "Host hardening. POST_GATE exit 0. Diff matches MUTATION_SPEC 1–5: saturating bitrate_kbps_from_bytes_per_sec, LossReport logs len/first/last, AuthResponse send failure calls terminate_session before returning, shutdown_signal falls back to Ctrl-C instead of expect, two new tests"
+status = "closed"
+severity = "medium"
+scope_ref = "perigee_host"
+created_at = "2026-11-19T01:59:36Z"
+updated_at = "2026-11-19T01:59:36Z"
+source_ref = "STEP 3A"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+
+[[history.previous_fixes]]
+date = "2026-11-19"
+commit = "7df9dbd"
+summary = "Completed per plan roadmap"
