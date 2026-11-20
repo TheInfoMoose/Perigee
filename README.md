@@ -14,7 +14,7 @@
 | :--- | :---: | :--- |
 | **Transport** | **Works** | `perigee-net` runs QUIC streams and datagrams over `quinn`, `VpnSocketFactory` binds to a named VPN interface or specific IP and fails closed if missing, and the host accept loop skips failed handshakes and shuts down cleanly on `SIGINT`/`SIGTERM`. |
 | **CLI** | **Works** | `perigee-host` takes `--bind` / `--interface` / `--name`; `perigee connect <host[:port]>` opens a session, prints status and frame counts, and disconnects cleanly; `perigee host` runs an embedded host; a loopback test runs the real host against the real client. |
-| **Auth** | **Planned** | TLS certificate verification currently accepts any peer certificate and `perigee-host` grants a session on an unauthenticated `ClientHello`; pinned peer authentication and pairing via `simply-transfer-link` are planned for Phase 4. |
+| **Auth** | **Works** | Every session uses mutual TLS 1.3 over QUIC. Each node has a persistent Ed25519 key (`identity.key`, mode 0600); the client pins the host's key (`known_hosts`) and the host admits only client keys listed in `trusted_clients`, so an untrusted peer fails the TLS handshake. Keys are exchanged by hand for now; SSH pairing via `simply-transfer-link` is planned for Phase 4b. |
 | **Capture** | **Stand-in** | Linux (Wayland/X11), Windows, and macOS capturers probe display availability and return constant-filled 64 KiB buffers (stopping the session on capture error); real headless virtual-output and screen-share capture are planned for Phases 5 and 8. |
 | **Encode / Decode** | **Stand-in** | Host video encoders slice raw frame bytes to 1–2 KiB without running a codec, and the client forwards the received payload into DecodedFrameSurface undecoded (crates/perigee-client/src/session.rs:218-224); real video encoding and decoding are planned for Phase 5. |
 | **Input** | **Stand-in** | Input events travel over QUIC datagrams; Linux Wayland and X11 injectors only log and update counters, while Windows `SendInput` and macOS `CGEventPost` call OS APIs with partial key maps and unscaled pixel coordinates. |
@@ -42,12 +42,26 @@ cargo test --workspace --all-targets --locked
 
 ## Running the host (development)
 
-> **Warning:** Authentication is not implemented yet. `perigee-host` currently accepts any `ClientHello` without verifying peer identity or credentials. Do not expose the host port on an untrusted network.
+> **Note:** Only clients whose node key is in the host's `trusted_clients` file can connect, and the client refuses a host whose key it has not pinned. Keep the host bound to loopback or a VPN interface anyway: there is no rate limiting yet.
 
-By default, `perigee-host` binds only to loopback (`127.0.0.1:4433`). Configure binding via CLI flags (`--bind`, `--interface`, `--name`) or environment variables (CLI flags override environment variables):
+By default, `perigee-host` binds only to loopback (`127.0.0.1:4433`). Configure binding via CLI flags (`--bind`, `--interface`, `--name`, `--config-dir`) or environment variables (CLI flags override environment variables):
 
 * `PERIGEE_BIND_ADDR`: Socket address and port to bind (default: `127.0.0.1:4433`).
 * `PERIGEE_BIND_INTERFACE`: Optional network/VPN interface name (e.g., `wg0`, `tailscale0`, `utun3`). If set, `perigee-host` binds strictly to that interface and exits with an error if the interface cannot be found or has no matching address.
+* `PERIGEE_CONFIG_DIR`: Directory holding `identity.key`, `trusted_clients` and `known_hosts` (default: `$XDG_CONFIG_HOME/perigee`, else `~/.config/perigee`; `%APPDATA%\Perigee` on Windows).
+
+Trust is set up once per pair of machines:
+
+```bash
+# On the host: print its node key and give it to the client
+cargo run -p perigee-host --locked -- identity
+# On the client: pin that key for the host's address
+cargo run -p perigee-cli --locked -- trust add 127.0.0.1:4433 <HOST_KEY>
+# On the client: print its node key and give it to the host
+cargo run -p perigee-cli --locked -- identity
+# On the host: allow that client (takes effect on the next connection)
+cargo run -p perigee-host --locked -- trust add <CLIENT_KEY> laptop
+```
 
 ```bash
 # Run on loopback (default 127.0.0.1:4433)
@@ -69,7 +83,7 @@ From the Phase 1 audit and evaluation (`docs/audit/13-evaluation.md`):
 
 1. **Phase 2 — Hygiene & Stand-in Cleanup (Complete)**: Delete stale root files, dead OOB/snapshot/elevation/passthrough code, and unused dependencies; enforce fail-closed VPN socket binding, loopback default bind, resilient accept loop, signal handling, and session reaper; label remaining stand-ins and rename the workspace to Perigee.
 2. **Phase 3 — CLI Client & Session Lifecycle (Complete)**: Extract connect logic out of `perigee-ui` into `perigee-client`; provide `perigee` and `perigee-host` CLI entrypoints, a complete session state machine, bounded peer data handling, clean teardown, and a real host-to-client loopback integration test.
-3. **ST Track & Phase 4 — Authenticated Transport (`simply-transfer-link`)**: Co-develop `simply-transfer-link` in `ST_Rust_Age` and adopt it in Perigee for SSH control-plane pairing, pinned peer certificates, session tickets, and a single authenticated QUIC endpoint.
+3. **Phase 4 — Authenticated Sessions (Complete)**: Persistent Ed25519 node identities, mutual TLS with pinned host keys and a host trust file on Perigee's single QUIC endpoint, and removal of the in-band auth handshake. **Phase 4b** adopts `simply-transfer-link` (co-developed in `ST_Rust_Age`) for SSH pairing that fills the same trust files.
 4. **Phase 5 — Linux / COSMIC Media & Input Pipeline**: Implement real headless virtual-output and login-screen (`cosmic-greeter`) capture, video encoding, client decoding, `wgpu` surface presentation, dynamic client-native output scaling, and Wayland input injection on Linux.
 5. **Phase 6 — Clipboard & File Transfer**: Wire bidirectional clipboard synchronization (text, images, files) and verified file transfers over `simply-transfer-link`.
 6. **Phase 7 — Two-App Packaging & Hardened Services**: Split packaging into the full Perigee suite and the lightweight `perigee-host` destination package with least-privilege, VPN-bound service definitions across Linux, macOS, and Windows.

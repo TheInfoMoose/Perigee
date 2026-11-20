@@ -18,43 +18,8 @@ mod tests {
     use zeroize::Zeroize;
 
     #[test]
-    fn test_ed25519_channel_bound_challenge_roundtrip() {
+    fn test_vault_session_token_roundtrip() {
         let vault = NistVault::new("test.perigee.common");
-        let (signing, verifying) = vault
-            .get_or_create_ed25519_identity("unit_test_peer")
-            .expect("Failed to create Ed25519 identity");
-
-        let (signing_reloaded, verifying_reloaded) = vault
-            .get_or_create_ed25519_identity("unit_test_peer")
-            .expect("Failed to reload persistent Ed25519 identity");
-        assert_eq!(signing.to_bytes(), signing_reloaded.to_bytes());
-        assert_eq!(verifying.to_bytes(), verifying_reloaded.to_bytes());
-
-        let challenge = b"random-32-byte-challenge-payload";
-        let cert_hash = [0x42u8; 32];
-
-        let signature = NistVault::sign_channel_bound_challenge(&signing, challenge, &cert_hash);
-        assert_eq!(signature.len(), 64);
-
-        NistVault::verify_channel_bound_challenge(
-            &verifying.to_bytes(),
-            challenge,
-            &cert_hash,
-            &signature,
-        )
-        .expect("Channel-bound signature verification should succeed");
-
-        let wrong_cert_hash = [0x99u8; 32];
-        assert!(
-            NistVault::verify_channel_bound_challenge(
-                &verifying.to_bytes(),
-                challenge,
-                &wrong_cert_hash,
-                &signature,
-            )
-            .is_err(),
-            "Mismatched TLS certificate hash must fail channel-bound verification"
-        );
 
         let token = VaultTokenModel {
             session_token: "nist-test-session-token".to_string(),
@@ -72,8 +37,6 @@ mod tests {
             .delete_session_token("unit_test_profile")
             .expect("Failed to delete session token");
         assert!(vault.get_session_token("unit_test_profile").is_err());
-
-        let _ = vault.storage.delete_secret("ed25519_unit_test_peer");
     }
 
     #[test]
