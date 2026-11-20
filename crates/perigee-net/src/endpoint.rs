@@ -1,7 +1,7 @@
 //! Quinn QUIC Endpoints, TLS 1.3 Handshake & Peer Certificate Channel Verifier
 //!
 //! Implements [`QuicClientTransport`], [`QuicServerListener`], and [`PeerCertChannelVerifier`]
-//! enforcing TLS 1.3 with the `ring` crypto provider, `perigee-v1` ALPN negotiation, and SHA-256
+//! enforcing TLS 1.3 with the `aws-lc-rs` crypto provider, `perigee-v1` ALPN negotiation, and SHA-256
 //! leaf certificate fingerprint capture for `NistVault` Ed25519 channel binding.
 
 use std::net::SocketAddr;
@@ -62,7 +62,7 @@ impl QuicClientTransport {
         let verifier = Arc::new(PeerCertChannelVerifier::new());
 
         let mut crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
+            rustls::crypto::aws_lc_rs::default_provider(),
         ))
         .with_safe_default_protocol_versions()?
         .dangerous()
@@ -130,7 +130,7 @@ impl QuicServerListener {
             PrivateKeyDer::try_from(key_der).map_err(|e| anyhow!("Invalid private key: {e}"))?;
 
         let mut server_crypto = rustls::ServerConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
+            rustls::crypto::aws_lc_rs::default_provider(),
         ))
         .with_safe_default_protocol_versions()?
         .with_no_client_auth()

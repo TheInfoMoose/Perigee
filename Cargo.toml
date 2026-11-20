@@ -96,10 +96,10 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["
 rav1e = { version = "0.8.1", default-features = false, features = ["threading"] }
 
 # Network, Transport & NIST Cryptographic Security
-quinn = { version = "0.11.12", default-features = false, features = ["rustls-ring", "runtime-tokio"] }
+quinn = { version = "0.11.12", default-features = false, features = ["rustls-aws-lc-rs", "runtime-tokio"] }
 quinn-proto = "0.11.19"
-rustls = { version = "0.23.46", default-features = false, features = ["ring", "aws-lc-rs", "std", "tls12"] }
-rcgen = "0.14.10"
+rustls = { version = "0.23.46", default-features = false, features = ["aws-lc-rs", "std", "tls12"] }
+rcgen = { version = "0.14.10", default-features = false, features = ["aws_lc_rs", "pem"] }
 socket2 = { version = "0.6.5", features = ["all"] }
 if-addrs = "0.15.0"
 russh = { version = "0.64.1", default-features = false, features = ["flate2", "aws-lc-rs"] }

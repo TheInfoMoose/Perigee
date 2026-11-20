@@ -167,7 +167,7 @@ async fn test_alpn_mismatch_rejected_then_valid_client_accepted() {
 
     let verifier = Arc::new(PeerCertChannelVerifier::new());
     let mut crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
+        rustls::crypto::aws_lc_rs::default_provider(),
     ))
     .with_safe_default_protocol_versions()
     .unwrap()
