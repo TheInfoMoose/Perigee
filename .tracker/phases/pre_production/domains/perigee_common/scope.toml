@@ -26,6 +26,6 @@ created_at = "2026-11-20T02:41:43Z"
 [[items.tasks]]
 id = "TASK-0057"
 title = "Delete channel-binding crypto + 4 common deps; README Auth → Works"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-20T02:43:56Z"
