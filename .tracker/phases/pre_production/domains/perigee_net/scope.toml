@@ -49,6 +49,6 @@ created_at = "2026-11-20T02:43:56Z"
 [[items.tasks]]
 id = "TASK-0056"
 title = "Delete legacy bind/connect + PeerCertChannelVerifier (NET-01); drop net dev-dep"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-20T02:43:56Z"
