@@ -7,9 +7,11 @@ use std::time::Duration;
 
 use perigee_common::NistVault;
 use perigee_net::{
-    PERIGEE_ALPN, PeerCertChannelVerifier, QuicClientTransport, QuicServerListener,
-    QuicTransportConfig, VpnInterfaceBinding, VpnSocketFactory,
+    AllowList, ClientAuth, LoopbackPeers, PERIGEE_ALPN, PeerCertChannelVerifier,
+    QuicClientTransport, QuicServerListener, QuicTransportConfig, ServerAuth, VpnInterfaceBinding,
+    VpnSocketFactory,
 };
+use perigee_protocol::{ControlMessage, WireMessage};
 use quinn::{Endpoint, EndpointConfig};
 use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -347,4 +349,141 @@ async fn test_loopback_datagram_and_length_prefixed_uni_stream_transmission() {
         2
     );
     assert!(client_conn.metrics.bytes_received.load(Ordering::Relaxed) > 2048);
+}
+
+#[tokio::test]
+async fn test_mtls_trusted_client_connects_and_sees_keys() {
+    let peers = LoopbackPeers::generate().unwrap();
+    let listener = QuicServerListener::bind_mtls(
+        "127.0.0.1:0".parse().unwrap(),
+        QuicTransportConfig::default(),
+        peers.server_auth(),
+    )
+    .unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server_task = tokio::spawn(async move {
+        let conn = listener
+            .accept()
+            .await
+            .expect("trusted client should be accepted");
+        let msg = conn
+            .recv_uni_message()
+            .await
+            .expect("message from trusted client");
+        (listener, conn.peer_node_key(), msg)
+    });
+
+    let client_conn = QuicClientTransport::new(QuicTransportConfig::default())
+        .connect_mtls(addr, peers.client_auth())
+        .await
+        .expect("mutual-TLS connect should succeed");
+    assert_eq!(client_conn.peer_node_key(), Some(peers.host.public_key()));
+
+    let probe = WireMessage::Control(ControlMessage::Disconnect {
+        reason: "mtls-probe".to_string(),
+    });
+    client_conn.send_uni_message(&probe).await.unwrap();
+
+    let (_listener, seen_client_key, received) =
+        tokio::time::timeout(Duration::from_secs(5), server_task)
+            .await
+            .expect("server task timed out")
+            .expect("server task panicked");
+    assert_eq!(seen_client_key, Some(peers.client.public_key()));
+    assert_eq!(received, probe);
+}
+
+#[tokio::test]
+async fn test_mtls_rejects_untrusted_client() {
+    let peers = LoopbackPeers::generate().unwrap();
+    let server_auth = ServerAuth {
+        identity: peers.host.clone(),
+        authorizer: Arc::new(AllowList::default()),
+    };
+    let listener = QuicServerListener::bind_mtls(
+        "127.0.0.1:0".parse().unwrap(),
+        QuicTransportConfig::default(),
+        server_auth,
+    )
+    .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        tokio::time::timeout(Duration::from_secs(2), listener.accept())
+            .await
+            .is_err()
+    });
+
+    let attempt = QuicClientTransport::new(QuicTransportConfig::default())
+        .connect_mtls(addr, peers.client_auth())
+        .await;
+    if let Ok(conn) = attempt {
+        tokio::time::timeout(Duration::from_secs(5), conn.connection.closed())
+            .await
+            .expect("host must close an untrusted client's connection");
+    }
+    assert!(
+        server_task.await.unwrap(),
+        "host must not accept an untrusted client"
+    );
+}
+
+#[tokio::test]
+async fn test_mtls_client_rejects_wrong_host_key() {
+    let peers = LoopbackPeers::generate().unwrap();
+    let listener = QuicServerListener::bind_mtls(
+        "127.0.0.1:0".parse().unwrap(),
+        QuicTransportConfig::default(),
+        peers.server_auth(),
+    )
+    .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        tokio::time::timeout(Duration::from_secs(2), listener.accept())
+            .await
+            .is_err()
+    });
+
+    let wrong_pin = ClientAuth {
+        identity: peers.client.clone(),
+        host_key: [0u8; 32],
+    };
+    let result = QuicClientTransport::new(QuicTransportConfig::default())
+        .connect_mtls(addr, wrong_pin)
+        .await;
+    assert!(
+        result.is_err(),
+        "client must refuse a host whose key is not the pinned one"
+    );
+    assert!(server_task.await.unwrap());
+}
+
+#[tokio::test]
+async fn test_mtls_rejects_client_without_certificate() {
+    let peers = LoopbackPeers::generate().unwrap();
+    let listener = QuicServerListener::bind_mtls(
+        "127.0.0.1:0".parse().unwrap(),
+        QuicTransportConfig::default(),
+        peers.server_auth(),
+    )
+    .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        tokio::time::timeout(Duration::from_secs(2), listener.accept())
+            .await
+            .is_err()
+    });
+
+    let attempt = QuicClientTransport::new(QuicTransportConfig::default())
+        .connect(addr, "perigee.host")
+        .await;
+    if let Ok(conn) = attempt {
+        tokio::time::timeout(Duration::from_secs(5), conn.connection.closed())
+            .await
+            .expect("host must close a client that sent no certificate");
+    }
+    assert!(
+        server_task.await.unwrap(),
+        "host must not accept a client without a certificate"
+    );
 }

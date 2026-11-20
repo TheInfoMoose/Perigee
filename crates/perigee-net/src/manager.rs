@@ -19,7 +19,7 @@ use perigee_protocol::{
     encode_wire_message,
 };
 
-use crate::{NetworkMetrics, QuicTransportConfig};
+use crate::{NODE_KEY_LEN, NetworkMetrics, QuicTransportConfig};
 
 /// Primary Connection Controller for active QUIC Sessions (Client or Host)
 pub struct QuicConnectionManager {
@@ -27,6 +27,7 @@ pub struct QuicConnectionManager {
     pub metrics: Arc<NetworkMetrics>,
     pub config: QuicTransportConfig,
     peer_cert_sha256: Option<[u8; 32]>,
+    peer_node_key: Option<[u8; NODE_KEY_LEN]>,
 }
 
 impl QuicConnectionManager {
@@ -40,7 +41,19 @@ impl QuicConnectionManager {
             metrics: Arc::new(NetworkMetrics::default()),
             config,
             peer_cert_sha256,
+            peer_node_key: None,
         }
+    }
+
+    /// Records the peer's Ed25519 node key (set by the mutual-TLS endpoints).
+    pub fn with_peer_node_key(mut self, peer_node_key: Option<[u8; NODE_KEY_LEN]>) -> Self {
+        self.peer_node_key = peer_node_key;
+        self
+    }
+
+    /// The peer's Ed25519 node key, when the connection was made with mutual TLS.
+    pub fn peer_node_key(&self) -> Option<[u8; NODE_KEY_LEN]> {
+        self.peer_node_key
     }
 
     /// Returns the SHA-256 fingerprint of the peer's TLS 1.3 leaf certificate for channel binding.
