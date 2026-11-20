@@ -18,7 +18,7 @@ created_at = "2026-11-19T01:59:16Z"
 [[items.tasks]]
 id = "TASK-0004"
 title = "The perigee CLI binary"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-19T01:59:36Z"
 
