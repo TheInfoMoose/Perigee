@@ -17,5 +17,6 @@ Phase 1 of `STEPPED_IMPLEMENTATION_PLAN.md` (local, gitignored): a read-only aud
 | `11-traceability.md` | Requirements traceability matrix | 1K |
 | `12-claude-validation.md` | Claude's validation of disputed/suspected items | — |
 | `13-evaluation.md` | Evaluation against desired function | — |
+| `14-phase4-completeness.md` | Phase 4 goal components in place or tracked in neb | 4R |
 
 Each report is written by Gemini, checked with `scripts/validate-step.sh`, read and spot-checked by Claude, then committed.
