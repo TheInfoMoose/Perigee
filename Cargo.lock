@@ -1961,6 +1961,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "perigee-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "perigee-client",
+ "perigee-host",
+ "perigee-net",
+ "perigee-protocol",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "perigee-client"
 version = "0.1.0"
 dependencies = [

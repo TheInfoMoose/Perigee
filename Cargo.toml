@@ -8,6 +8,7 @@ members = [
     "crates/perigee-client",
     "crates/perigee-host",
     "crates/perigee-ui",
+    "crates/perigee-cli",
 ]
 exclude = [
     "vendor/ST_Rust_Age",
@@ -31,6 +32,7 @@ perigee-channels = { path = "crates/perigee-channels", version = "0.1.0" }
 perigee-client = { path = "crates/perigee-client", version = "0.1.0" }
 perigee-host = { path = "crates/perigee-host", version = "0.1.0" }
 perigee-ui = { path = "crates/perigee-ui", version = "0.1.0" }
+perigee-cli = { path = "crates/perigee-cli", version = "0.1.0" }
 
 # Simply Transfer v2 Integration (ST_Rust_Age)
 simply-transfer-core = { path = "vendor/ST_Rust_Age/simply-transfer-core", version = "0.1.0" }
