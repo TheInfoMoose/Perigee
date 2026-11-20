@@ -1,16 +1,17 @@
-//! Quinn QUIC Endpoints, TLS 1.3 Handshake & Peer Certificate Channel Verifier
+//! Quinn QUIC endpoints with mutual TLS 1.3.
 //!
-//! Implements [`QuicClientTransport`], [`QuicServerListener`], and [`PeerCertChannelVerifier`]
-//! enforcing TLS 1.3 with the `aws-lc-rs` crypto provider, `perigee-v1` ALPN negotiation, and SHA-256
-//! leaf certificate fingerprint capture for `NistVault` Ed25519 channel binding.
+//! [`QuicServerListener::bind_mtls`] and [`QuicClientTransport::connect_mtls`] run TLS 1.3 with the
+//! `aws-lc-rs` provider and `perigee-v1` ALPN. Each side presents a certificate made from its
+//! Ed25519 node key: the client accepts only the pinned host key, and the host accepts only
+//! client keys its [`PeerAuthorizer`] trusts. There is no unauthenticated transport.
 
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use quinn::{Endpoint, EndpointConfig, ServerConfig, TransportConfig};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+use rustls::pki_types::{CertificateDer, ServerName};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
@@ -77,78 +78,6 @@ pub struct QuicClientTransport {
 impl QuicClientTransport {
     pub fn new(config: QuicTransportConfig) -> Self {
         Self { config }
-    }
-
-    /// Establishes an outbound QUIC connection over a specified VPN socket
-    pub async fn connect(
-        &self,
-        server_addr: SocketAddr,
-        server_name: &str,
-    ) -> Result<QuicConnectionManager> {
-        info!(
-            "Initiating QUIC connection to {} ({})",
-            server_name, server_addr
-        );
-
-        let local_addr: SocketAddr = match server_addr {
-            SocketAddr::V4(_) => "0.0.0.0:0".parse()?,
-            SocketAddr::V6(_) => "[::]:0".parse()?,
-        };
-
-        let std_socket =
-            VpnSocketFactory::create_bound_udp_socket(local_addr, &self.config.interface_binding)?;
-
-        let mut transport_config = TransportConfig::default();
-        transport_config.max_idle_timeout(Some(
-            Duration::from_millis(self.config.max_idle_timeout_ms).try_into()?,
-        ));
-        transport_config.keep_alive_interval(Some(Duration::from_millis(
-            self.config.keep_alive_interval_ms,
-        )));
-        transport_config
-            .max_concurrent_bidi_streams(self.config.max_concurrent_bidi_streams.into());
-        transport_config.max_concurrent_uni_streams(self.config.max_concurrent_uni_streams.into());
-
-        let verifier = Arc::new(PeerCertChannelVerifier::new());
-
-        let mut crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()?
-        .dangerous()
-        .with_custom_certificate_verifier(verifier.clone())
-        .with_no_client_auth();
-
-        crypto.alpn_protocols = PERIGEE_ALPN.iter().map(|s| s.to_vec()).collect();
-
-        let mut client_config = quinn::ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?,
-        ));
-        client_config.transport_config(Arc::new(transport_config));
-
-        let mut endpoint = Endpoint::new(
-            EndpointConfig::default(),
-            None,
-            std_socket,
-            Arc::new(quinn::TokioRuntime),
-        )?;
-        endpoint.set_default_client_config(client_config);
-
-        let connecting = endpoint.connect(server_addr, server_name)?;
-        let connection = connecting
-            .await
-            .context("QUIC connection handshake failed")?;
-
-        let peer_cert_hash = verifier.captured_fingerprint();
-        info!(
-            "QUIC connection successfully established with {}",
-            server_name
-        );
-        Ok(QuicConnectionManager::new(
-            connection,
-            self.config.clone(),
-            peer_cert_hash,
-        ))
     }
 
     /// Connects to a host over mutual TLS: presents `auth.identity`'s certificate and accepts
@@ -228,61 +157,6 @@ pub struct QuicServerListener {
 }
 
 impl QuicServerListener {
-    /// Binds a QUIC server endpoint to a host network interface
-    pub fn bind(bind_addr: SocketAddr, config: QuicTransportConfig) -> Result<Self> {
-        info!("Binding QUIC host listener to {}", bind_addr);
-
-        let std_socket =
-            VpnSocketFactory::create_bound_udp_socket(bind_addr, &config.interface_binding)?;
-
-        let cert = rcgen::generate_simple_self_signed(vec!["perigee.host".to_string()])?;
-        let cert_der = cert.cert.der().to_vec();
-        let key_der = cert.signing_key.serialize_der();
-
-        let mut hasher = Sha256::new();
-        hasher.update(&cert_der);
-        let server_cert_sha256: [u8; 32] = hasher.finalize().into();
-
-        let cert_chain = vec![CertificateDer::from(cert_der)];
-        let priv_key =
-            PrivateKeyDer::try_from(key_der).map_err(|e| anyhow!("Invalid private key: {e}"))?;
-
-        let mut server_crypto = rustls::ServerConfig::builder_with_provider(Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()?
-        .with_no_client_auth()
-        .with_single_cert(cert_chain, priv_key)?;
-
-        server_crypto.alpn_protocols = PERIGEE_ALPN.iter().map(|s| s.to_vec()).collect();
-
-        let mut server_config = ServerConfig::with_crypto(Arc::new(
-            quinn::crypto::rustls::QuicServerConfig::try_from(server_crypto)?,
-        ));
-
-        let mut transport_config = TransportConfig::default();
-        transport_config.max_idle_timeout(Some(
-            Duration::from_millis(config.max_idle_timeout_ms).try_into()?,
-        ));
-        transport_config
-            .keep_alive_interval(Some(Duration::from_millis(config.keep_alive_interval_ms)));
-
-        server_config.transport_config(Arc::new(transport_config));
-
-        let endpoint = Endpoint::new(
-            EndpointConfig::default(),
-            Some(server_config),
-            std_socket,
-            Arc::new(quinn::TokioRuntime),
-        )?;
-
-        Ok(Self {
-            config,
-            endpoint,
-            server_cert_sha256,
-        })
-    }
-
     /// Binds a QUIC host endpoint that presents `auth.identity`'s certificate and requires every
     /// client to present a certificate whose node key `auth.authorizer` trusts.
     pub fn bind_mtls(
@@ -511,73 +385,5 @@ impl rustls::server::danger::ClientCertVerifier for TrustedClientVerifier {
         self.provider
             .signature_verification_algorithms
             .supported_schemes()
-    }
-}
-
-/// Peer Certificate Verifier that captures the peer certificate SHA-256 digest for
-/// cryptographic channel binding with `NistVault` Ed25519 signatures.
-#[derive(Debug)]
-pub struct PeerCertChannelVerifier {
-    fingerprint: StdMutex<Option<[u8; 32]>>,
-}
-
-impl Default for PeerCertChannelVerifier {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PeerCertChannelVerifier {
-    pub fn new() -> Self {
-        Self {
-            fingerprint: StdMutex::new(None),
-        }
-    }
-
-    pub fn captured_fingerprint(&self) -> Option<[u8; 32]> {
-        *self.fingerprint.lock().unwrap_or_else(|p| p.into_inner())
-    }
-}
-
-impl rustls::client::danger::ServerCertVerifier for PeerCertChannelVerifier {
-    fn verify_server_cert(
-        &self,
-        end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        let mut hasher = Sha256::new();
-        hasher.update(end_entity.as_ref());
-        let digest: [u8; 32] = hasher.finalize().into();
-        *self.fingerprint.lock().unwrap_or_else(|p| p.into_inner()) = Some(digest);
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            rustls::SignatureScheme::ED25519,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::RSA_PSS_SHA256,
-        ]
     }
 }

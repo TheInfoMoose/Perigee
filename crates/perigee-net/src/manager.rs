@@ -163,7 +163,7 @@ impl QuicConnectionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{QuicClientTransport, QuicServerListener};
+    use crate::{LoopbackPeers, QuicClientTransport, QuicServerListener};
     use perigee_protocol::{
         ControlMessage, ElementState, HandshakeMessage, InputEvent, MouseButtonCode, PixelFormat,
         VideoCodec, VideoFrameMessage,
@@ -171,9 +171,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_quic_loopback_handshake_and_datagram() {
+        let peers = LoopbackPeers::generate().unwrap();
         let server_cfg = QuicTransportConfig::default();
-        let listener = QuicServerListener::bind("127.0.0.1:0".parse().unwrap(), server_cfg)
-            .expect("Failed to bind QUIC listener");
+        let listener = QuicServerListener::bind_mtls(
+            "127.0.0.1:0".parse().unwrap(),
+            server_cfg,
+            peers.server_auth(),
+        )
+        .expect("Failed to bind QUIC listener");
         let addr = listener.local_addr().unwrap();
 
         let server_handle = tokio::spawn(async move {
@@ -189,7 +194,7 @@ mod tests {
 
         let client = QuicClientTransport::new(QuicTransportConfig::default());
         let client_conn = client
-            .connect(addr, "perigee.host")
+            .connect_mtls(addr, peers.client_auth())
             .await
             .expect("Client failed to connect");
 
@@ -215,9 +220,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_quic_loopback_length_prefixed_unidirectional_stream() {
+        let peers = LoopbackPeers::generate().unwrap();
         let server_cfg = QuicTransportConfig::default();
-        let listener = QuicServerListener::bind("127.0.0.1:0".parse().unwrap(), server_cfg)
-            .expect("Failed to bind QUIC listener");
+        let listener = QuicServerListener::bind_mtls(
+            "127.0.0.1:0".parse().unwrap(),
+            server_cfg,
+            peers.server_auth(),
+        )
+        .expect("Failed to bind QUIC listener");
         let addr = listener.local_addr().unwrap();
 
         let expected_video = WireMessage::Video(VideoFrameMessage {
@@ -256,7 +266,7 @@ mod tests {
 
         let client = QuicClientTransport::new(QuicTransportConfig::default());
         let client_conn = client
-            .connect(addr, "perigee.host")
+            .connect_mtls(addr, peers.client_auth())
             .await
             .expect("Client failed to connect");
 
@@ -286,9 +296,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_quic_loopback_combined_datagram_and_uni_stream_with_metrics_monitor() {
-        let listener = QuicServerListener::bind(
+        let peers = LoopbackPeers::generate().unwrap();
+        let listener = QuicServerListener::bind_mtls(
             "127.0.0.1:0".parse().unwrap(),
             QuicTransportConfig::default(),
+            peers.server_auth(),
         )
         .expect("Failed to bind QUIC listener");
         let addr = listener.local_addr().unwrap();
@@ -310,7 +322,7 @@ mod tests {
 
         let client = QuicClientTransport::new(QuicTransportConfig::default());
         let client_conn = client
-            .connect(addr, "perigee.host")
+            .connect_mtls(addr, peers.client_auth())
             .await
             .expect("Client failed to connect");
 

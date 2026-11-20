@@ -2039,7 +2039,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "if-addrs",
- "perigee-common",
  "perigee-protocol",
  "quinn",
  "rcgen",

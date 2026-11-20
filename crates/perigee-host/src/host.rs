@@ -469,15 +469,17 @@ pub async fn shutdown_signal() {
 mod tests {
     use super::*;
     use crate::CaptureBackendType;
-    use perigee_net::{ClientAuth, QuicClientTransport, QuicTransportConfig};
+    use perigee_net::{ClientAuth, LoopbackPeers, QuicClientTransport, QuicTransportConfig};
     use perigee_protocol::{HandshakeMessage, VideoCodec, WireMessage};
     use tokio::sync::oneshot;
 
     #[tokio::test]
     async fn test_run_host_stops_sessions_and_closes_connections_on_shutdown() {
-        let listener = QuicServerListener::bind(
+        let peers = LoopbackPeers::generate().unwrap();
+        let listener = QuicServerListener::bind_mtls(
             "127.0.0.1:0".parse().unwrap(),
             QuicTransportConfig::default(),
+            peers.server_auth(),
         )
         .expect("Failed to bind QUIC listener");
         let addr = listener.local_addr().unwrap();
@@ -498,7 +500,7 @@ mod tests {
 
         let client = QuicClientTransport::new(QuicTransportConfig::default());
         let client_conn = client
-            .connect(addr, "perigee.host")
+            .connect_mtls(addr, peers.client_auth())
             .await
             .expect("Client failed to connect");
 
@@ -552,9 +554,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_host_returns_when_endpoint_closes() {
-        let listener = QuicServerListener::bind(
+        let peers = LoopbackPeers::generate().unwrap();
+        let listener = QuicServerListener::bind_mtls(
             "127.0.0.1:0".parse().unwrap(),
             QuicTransportConfig::default(),
+            peers.server_auth(),
         )
         .expect("Failed to bind QUIC listener");
 

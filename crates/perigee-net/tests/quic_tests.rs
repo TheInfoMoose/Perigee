@@ -1,56 +1,113 @@
-//! Integration tests for `perigee-net` QUIC endpoints, TLS 1.3 `perigee-v1` ALPN negotiation,
-//! and peer certificate SHA-256 fingerprint capture for `NistVault` Ed25519 channel binding.
+//! Integration tests for `perigee-net` QUIC endpoints: mutual TLS with pinned Ed25519 node keys,
+//! TLS 1.3 `perigee-v1` ALPN negotiation, datagrams and length-prefixed streams.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use perigee_common::NistVault;
 use perigee_net::{
-    AllowList, ClientAuth, LoopbackPeers, PERIGEE_ALPN, PeerCertChannelVerifier,
-    QuicClientTransport, QuicServerListener, QuicTransportConfig, ServerAuth, VpnInterfaceBinding,
-    VpnSocketFactory,
+    AllowList, ClientAuth, LoopbackPeers, PERIGEE_ALPN, QuicClientTransport, QuicServerListener,
+    QuicTransportConfig, ServerAuth, VpnInterfaceBinding, VpnSocketFactory,
 };
 use perigee_protocol::{ControlMessage, WireMessage};
 use quinn::{Endpoint, EndpointConfig};
-use rustls::client::danger::ServerCertVerifier;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use sha2::{Digest, Sha256};
+use rustls::{DigitallySignedStruct, SignatureScheme};
+
+/// Test-only verifier for raw clients that must reach the host's handshake (bad ALPN, no
+/// client certificate). It accepts any host certificate; production clients pin the host key.
+#[derive(Debug)]
+struct AcceptAnyServerCert;
+
+impl ServerCertVerifier for AcceptAnyServerCert {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// Opens a raw QUIC connection that offers `alpn` and presents no client certificate.
+async fn connect_raw_without_client_cert(
+    server_addr: SocketAddr,
+    alpn: &[u8],
+) -> Result<quinn::Connection, quinn::ConnectionError> {
+    let std_socket = VpnSocketFactory::create_bound_udp_socket(
+        "127.0.0.1:0".parse().unwrap(),
+        &VpnInterfaceBinding::DefaultSystemRoute,
+    )
+    .expect("Failed to bind client UDP socket");
+    let mut crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .dangerous()
+    .with_custom_certificate_verifier(Arc::new(AcceptAnyServerCert))
+    .with_no_client_auth();
+    crypto.alpn_protocols = vec![alpn.to_vec()];
+    let client_config = quinn::ClientConfig::new(Arc::new(
+        quinn::crypto::rustls::QuicClientConfig::try_from(crypto).unwrap(),
+    ));
+    let mut endpoint = Endpoint::new(
+        EndpointConfig::default(),
+        None,
+        std_socket,
+        Arc::new(quinn::TokioRuntime),
+    )
+    .expect("Failed to create client endpoint");
+    endpoint.set_default_client_config(client_config);
+    endpoint
+        .connect(server_addr, "perigee.host")
+        .expect("Failed to initiate connection")
+        .await
+}
 
 #[test]
 fn test_perigee_alpn_constant() {
     assert_eq!(PERIGEE_ALPN, &[b"perigee-v1"]);
 }
 
-#[test]
-fn test_peer_cert_channel_verifier_direct_sha256_capture() {
-    let verifier = PeerCertChannelVerifier::default();
-    assert_eq!(verifier.captured_fingerprint(), None);
-
-    let generated = rcgen::generate_simple_self_signed(vec!["perigee.host".to_string()])
-        .expect("Failed to generate self-signed cert");
-    let cert_der_bytes = generated.cert.der().to_vec();
-
-    let mut hasher = Sha256::new();
-    hasher.update(&cert_der_bytes);
-    let expected_sha256: [u8; 32] = hasher.finalize().into();
-
-    let cert_der = CertificateDer::from(cert_der_bytes);
-    let server_name = ServerName::try_from("perigee.host").expect("Valid DNS name");
-
-    verifier
-        .verify_server_cert(&cert_der, &[], &server_name, &[], UnixTime::now())
-        .expect("PeerCertChannelVerifier should accept self-signed leaf certificate");
-
-    assert_eq!(verifier.captured_fingerprint(), Some(expected_sha256));
-    assert_ne!(expected_sha256, [0u8; 32]);
-}
-
 #[tokio::test]
 async fn test_tls13_alpn_perigee_v1_negotiation_and_cert_sha256_capture() {
+    let peers = LoopbackPeers::generate().unwrap();
     let server_config = QuicTransportConfig::default();
-    let listener = QuicServerListener::bind("127.0.0.1:0".parse().unwrap(), server_config)
-        .expect("Failed to bind QuicServerListener");
+    let listener = QuicServerListener::bind_mtls(
+        "127.0.0.1:0".parse().unwrap(),
+        server_config,
+        peers.server_auth(),
+    )
+    .expect("Failed to bind QuicServerListener");
     let server_addr = listener.local_addr().expect("Failed to read bound addr");
     let expected_server_cert_hash = listener.server_cert_sha256;
     assert_ne!(
@@ -67,7 +124,7 @@ async fn test_tls13_alpn_perigee_v1_negotiation_and_cert_sha256_capture() {
 
     let client = QuicClientTransport::new(QuicTransportConfig::default());
     let client_conn = client
-        .connect(server_addr, "perigee.host")
+        .connect_mtls(server_addr, peers.client_auth())
         .await
         .expect("Client failed to complete QUIC TLS 1.3 handshake");
 
@@ -112,98 +169,30 @@ async fn test_tls13_alpn_perigee_v1_negotiation_and_cert_sha256_capture() {
         server_conn.peer_cert_sha256(),
         Some(expected_server_cert_hash)
     );
-
-    // 4. Verify end-to-end Ed25519 TLS 1.3 channel binding using the captured SHA-256 fingerprint
-    let vault = NistVault::new("test.perigee.net");
-    let (signing_key, verifying_key) = vault
-        .get_or_create_ed25519_identity("quic_channel_binding_peer")
-        .expect("Failed to create Ed25519 identity via NistVault");
-    let public_key_bytes = verifying_key.to_bytes();
-
-    let challenge = [0x42u8; 32];
-    let signature =
-        NistVault::sign_channel_bound_challenge(&signing_key, &challenge, &captured_peer_hash);
-    assert_eq!(signature.len(), 64);
-
-    NistVault::verify_channel_bound_challenge(
-        &public_key_bytes,
-        &challenge,
-        &server_conn.peer_cert_sha256().unwrap(),
-        &signature,
-    )
-    .expect("Channel-bound Ed25519 signature must verify with matching TLS cert SHA-256");
-
-    // A MITM connection with a different TLS certificate SHA-256 digest must fail verification
-    let mut mitm_cert_hash = captured_peer_hash;
-    mitm_cert_hash[0] ^= 0xFF;
-    assert!(
-        NistVault::verify_channel_bound_challenge(
-            &public_key_bytes,
-            &challenge,
-            &mitm_cert_hash,
-            &signature,
-        )
-        .is_err(),
-        "Channel-bound verification must reject mismatched TLS certificate fingerprint"
-    );
 }
 
 #[tokio::test]
 async fn test_alpn_mismatch_rejected_then_valid_client_accepted() {
-    let listener = QuicServerListener::bind(
+    let peers = LoopbackPeers::generate().unwrap();
+    let listener = QuicServerListener::bind_mtls(
         "127.0.0.1:0".parse().unwrap(),
         QuicTransportConfig::default(),
+        peers.server_auth(),
     )
     .expect("Failed to bind QuicServerListener");
     let server_addr = listener.local_addr().expect("Failed to read bound addr");
 
     let server_task = tokio::spawn(async move { listener.accept().await });
 
-    // Construct a raw QUIC client advertising an incompatible ALPN protocol
-    let local_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let std_socket = VpnSocketFactory::create_bound_udp_socket(
-        local_addr,
-        &VpnInterfaceBinding::DefaultSystemRoute,
-    )
-    .expect("Failed to bind client UDP socket");
-
-    let verifier = Arc::new(PeerCertChannelVerifier::new());
-    let mut crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::aws_lc_rs::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .unwrap()
-    .dangerous()
-    .with_custom_certificate_verifier(verifier)
-    .with_no_client_auth();
-
-    crypto.alpn_protocols = vec![b"incompatible-alpn-v0".to_vec()];
-
-    let client_config = quinn::ClientConfig::new(Arc::new(
-        quinn::crypto::rustls::QuicClientConfig::try_from(crypto).unwrap(),
-    ));
-
-    let mut endpoint = Endpoint::new(
-        EndpointConfig::default(),
-        None,
-        std_socket,
-        Arc::new(quinn::TokioRuntime),
-    )
-    .expect("Failed to create client endpoint");
-    endpoint.set_default_client_config(client_config);
-
-    let connecting = endpoint
-        .connect(server_addr, "perigee.host")
-        .expect("Failed to initiate connection");
-
-    let client_result = connecting.await;
+    // A raw QUIC client advertising an incompatible ALPN protocol
+    let client_result = connect_raw_without_client_cert(server_addr, b"incompatible-alpn-v0").await;
     assert!(
         client_result.is_err(),
         "QUIC TLS 1.3 handshake must fail when client ALPN does not match perigee-v1"
     );
 
     let valid_client = QuicClientTransport::new(QuicTransportConfig::default())
-        .connect(server_addr, "perigee.host")
+        .connect_mtls(server_addr, peers.client_auth())
         .await;
     assert!(
         valid_client.is_ok(),
@@ -222,9 +211,11 @@ async fn test_alpn_mismatch_rejected_then_valid_client_accepted() {
 
 #[tokio::test]
 async fn test_accept_returns_none_after_endpoint_close() {
-    let listener = QuicServerListener::bind(
+    let peers = LoopbackPeers::generate().unwrap();
+    let listener = QuicServerListener::bind_mtls(
         "127.0.0.1:0".parse().unwrap(),
         QuicTransportConfig::default(),
+        peers.server_auth(),
     )
     .expect("Failed to bind QuicServerListener");
 
@@ -250,9 +241,11 @@ async fn test_loopback_datagram_and_length_prefixed_uni_stream_transmission() {
 
     assert_eq!(NetworkMetrics::calculate_loss_rate(200, 10), 5.0);
 
-    let listener = QuicServerListener::bind(
+    let peers = LoopbackPeers::generate().unwrap();
+    let listener = QuicServerListener::bind_mtls(
         "127.0.0.1:0".parse().unwrap(),
         QuicTransportConfig::default(),
+        peers.server_auth(),
     )
     .expect("Failed to bind QuicServerListener");
     let server_addr = listener.local_addr().expect("Failed to read bound addr");
@@ -320,7 +313,7 @@ async fn test_loopback_datagram_and_length_prefixed_uni_stream_transmission() {
 
     let client = QuicClientTransport::new(QuicTransportConfig::default());
     let client_conn = client
-        .connect(server_addr, "perigee.host")
+        .connect_mtls(server_addr, peers.client_auth())
         .await
         .expect("Client failed to connect");
 
@@ -474,11 +467,9 @@ async fn test_mtls_rejects_client_without_certificate() {
             .is_err()
     });
 
-    let attempt = QuicClientTransport::new(QuicTransportConfig::default())
-        .connect(addr, "perigee.host")
-        .await;
+    let attempt = connect_raw_without_client_cert(addr, b"perigee-v1").await;
     if let Ok(conn) = attempt {
-        tokio::time::timeout(Duration::from_secs(5), conn.connection.closed())
+        tokio::time::timeout(Duration::from_secs(5), conn.closed())
             .await
             .expect("host must close a client that sent no certificate");
     }
