@@ -14,7 +14,7 @@
 
 use anyhow::Result;
 use perigee_host::{
-    HOST_USAGE, HostCommand, HostOptions, bind_host, parse_host_args, run_host, shutdown_signal,
+    HOST_USAGE, HostCommand, bind_host, resolve_host_command, run_host, shutdown_signal,
 };
 
 #[tokio::main]
@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
         .init();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match parse_host_args(&args, HostOptions::from_env()?)? {
+    match resolve_host_command(&args, |k| std::env::var(k).ok())? {
         HostCommand::Help => {
             println!("{HOST_USAGE}");
             Ok(())

@@ -143,6 +143,19 @@ pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand
     Ok(HostCommand::Run(opts))
 }
 
+/// Resolves the `perigee-host` command line. `--help` and `--version` never read the
+/// environment; only a run applies `PERIGEE_BIND_ADDR` / `PERIGEE_BIND_INTERFACE` (read
+/// through `get`) underneath the flags.
+pub fn resolve_host_command(
+    args: &[String],
+    get: impl Fn(&str) -> Option<String>,
+) -> Result<HostCommand> {
+    match parse_host_args(args, HostOptions::default())? {
+        HostCommand::Run(_) => parse_host_args(args, HostOptions::from_env_with(get)?),
+        other => Ok(other),
+    }
+}
+
 /// Auto-detects the capture backend, constructs a [`PerigeeHostDaemon`], and binds a
 /// [`QuicServerListener`] according to `options`.
 pub fn bind_host(options: &HostOptions) -> Result<(Arc<PerigeeHostDaemon>, QuicServerListener)> {
@@ -467,6 +480,38 @@ mod tests {
         assert_eq!(
             iface_opts.transport_config().interface_binding,
             VpnInterfaceBinding::InterfaceName("wg0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_host_command_ignores_env_for_help() {
+        let bad_env = |k: &str| (k == "PERIGEE_BIND_ADDR").then(|| "not-an-addr".to_string());
+        assert_eq!(
+            resolve_host_command(&["--help".to_string()], bad_env).unwrap(),
+            HostCommand::Help
+        );
+        assert_eq!(
+            resolve_host_command(&["-V".to_string()], bad_env).unwrap(),
+            HostCommand::Version
+        );
+        let err = resolve_host_command(&[], bad_env).unwrap_err();
+        assert!(format!("{err:#}").contains("PERIGEE_BIND_ADDR"));
+
+        let env = |k: &str| (k == "PERIGEE_BIND_ADDR").then(|| "192.0.2.10:5000".to_string());
+        assert_eq!(
+            resolve_host_command(&[], env).unwrap(),
+            HostCommand::Run(HostOptions {
+                bind_addr: "192.0.2.10:5000".parse().unwrap(),
+                ..HostOptions::default()
+            })
+        );
+        let args = ["--bind".to_string(), "127.0.0.1:0".to_string()];
+        assert_eq!(
+            resolve_host_command(&args, env).unwrap(),
+            HostCommand::Run(HostOptions {
+                bind_addr: "127.0.0.1:0".parse().unwrap(),
+                ..HostOptions::default()
+            })
         );
     }
 }

@@ -57,7 +57,7 @@ pub use encoder::{EncoderConfig, MacOsVideoToolboxEncoder, SoftwareVideoEncoder,
 pub mod host;
 pub use host::{
     DEFAULT_BIND_ADDR, DEFAULT_NODE_NAME, HOST_USAGE, HostCommand, HostOptions, bind_host,
-    parse_host_args, run_host, shutdown_signal,
+    parse_host_args, resolve_host_command, run_host, shutdown_signal,
 };
 
 /// Operating System Display & Frame Capture Backend
