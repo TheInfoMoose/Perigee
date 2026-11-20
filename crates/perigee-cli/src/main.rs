@@ -69,8 +69,7 @@ fn format_cert_sha256(digest: Option<[u8; 32]>) -> String {
 
 async fn run_connect(args: ConnectArgs) -> Result<()> {
     let auth = client_auth_for(&args)?;
-    let mut opts = ConnectOptions::new(args.target.clone());
-    opts.auth = Some(auth);
+    let mut opts = ConnectOptions::new(args.target.clone(), auth);
     opts.interface = args.interface;
     opts.handshake_timeout = args.handshake_timeout;
 

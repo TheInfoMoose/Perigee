@@ -19,12 +19,13 @@ fn trusted_options(
     client: &Arc<NodeIdentity>,
     host_key: [u8; NODE_KEY_LEN],
 ) -> ConnectOptions {
-    let mut options = ConnectOptions::new(addr.to_string());
-    options.auth = Some(ClientAuth {
-        identity: client.clone(),
-        host_key,
-    });
-    options
+    ConnectOptions::new(
+        addr.to_string(),
+        ClientAuth {
+            identity: client.clone(),
+            host_key,
+        },
+    )
 }
 
 #[tokio::test]

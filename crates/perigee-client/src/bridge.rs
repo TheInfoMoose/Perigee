@@ -287,7 +287,9 @@ impl QuicSessionBridge {
 mod tests {
     use super::*;
     use crate::connect::{ConnectOptions, connect};
-    use perigee_net::{QuicClientTransport, QuicServerListener, QuicTransportConfig};
+    use perigee_net::{
+        LoopbackPeers, QuicClientTransport, QuicServerListener, QuicTransportConfig,
+    };
     use perigee_protocol::{
         AudioCodec, AudioDirection, AudioFrameMessage, ElementState, HandshakeMessage,
         MouseButtonCode, PixelFormat, VideoCodec, VideoFrameMessage,
@@ -337,9 +339,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_quic_session_bridge_end_to_end_loopback() {
-        let listener = QuicServerListener::bind(
+        let peers = LoopbackPeers::generate().unwrap();
+        let listener = QuicServerListener::bind_mtls(
             "127.0.0.1:0".parse().unwrap(),
             QuicTransportConfig::default(),
+            peers.server_auth(),
         )
         .expect("Failed to bind QUIC server listener");
         let server_addr = listener.local_addr().unwrap();
@@ -458,7 +462,7 @@ mod tests {
         let client_transport = QuicClientTransport::new(QuicTransportConfig::default());
         let client_conn = Arc::new(
             client_transport
-                .connect(server_addr, "perigee.host")
+                .connect_mtls(server_addr, peers.client_auth())
                 .await
                 .expect("Client failed to connect to QUIC listener"),
         );
@@ -519,9 +523,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_disconnect_sends_disconnect_and_drains_tasks() {
-        let listener = QuicServerListener::bind(
+        let peers = LoopbackPeers::generate().unwrap();
+        let listener = QuicServerListener::bind_mtls(
             "127.0.0.1:0".parse().unwrap(),
             QuicTransportConfig::default(),
+            peers.server_auth(),
         )
         .expect("Failed to bind QUIC listener");
         let server_addr = listener.local_addr().unwrap();
@@ -560,9 +566,12 @@ mod tests {
             (listener, server_conn, disconnect_msg)
         });
 
-        let session = connect(ConnectOptions::new(server_addr.to_string()))
-            .await
-            .expect("connect should succeed");
+        let session = connect(ConnectOptions::new(
+            server_addr.to_string(),
+            peers.client_auth(),
+        ))
+        .await
+        .expect("connect should succeed");
 
         session.disconnect("test").await;
 
@@ -588,9 +597,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_host_close_moves_client_to_terminated() {
-        let listener = QuicServerListener::bind(
+        let peers = LoopbackPeers::generate().unwrap();
+        let listener = QuicServerListener::bind_mtls(
             "127.0.0.1:0".parse().unwrap(),
             QuicTransportConfig::default(),
+            peers.server_auth(),
         )
         .expect("Failed to bind QUIC listener");
         let server_addr = listener.local_addr().unwrap();
@@ -618,9 +629,12 @@ mod tests {
             (listener, server_conn)
         });
 
-        let mut session = connect(ConnectOptions::new(server_addr.to_string()))
-            .await
-            .expect("connect should succeed");
+        let mut session = connect(ConnectOptions::new(
+            server_addr.to_string(),
+            peers.client_auth(),
+        ))
+        .await
+        .expect("connect should succeed");
         let _ = connected_tx.send(());
 
         let terminated_reason = tokio::time::timeout(Duration::from_secs(5), async {
@@ -656,9 +670,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_disconnect_twice_is_harmless() {
-        let listener = QuicServerListener::bind(
+        let peers = LoopbackPeers::generate().unwrap();
+        let listener = QuicServerListener::bind_mtls(
             "127.0.0.1:0".parse().unwrap(),
             QuicTransportConfig::default(),
+            peers.server_auth(),
         )
         .expect("Failed to bind QUIC listener");
         let server_addr = listener.local_addr().unwrap();
@@ -684,9 +700,12 @@ mod tests {
             (listener, server_conn)
         });
 
-        let session = connect(ConnectOptions::new(server_addr.to_string()))
-            .await
-            .expect("connect should succeed");
+        let session = connect(ConnectOptions::new(
+            server_addr.to_string(),
+            peers.client_auth(),
+        ))
+        .await
+        .expect("connect should succeed");
 
         session.disconnect("first").await;
         session.disconnect("second").await;

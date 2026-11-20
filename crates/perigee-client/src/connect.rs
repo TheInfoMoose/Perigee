@@ -102,14 +102,13 @@ pub struct ConnectOptions {
     pub interface: Option<String>,
     pub handshake_timeout: Duration,
     pub session: SessionConfig,
-    /// Mutual-TLS identity and pinned host key. `None` uses the legacy unauthenticated
-    /// transport (removed in STEP 4O).
-    pub auth: Option<ClientAuth>,
+    /// This machine's node identity and the pinned host key; every session uses mutual TLS.
+    pub auth: ClientAuth,
 }
 
 impl ConnectOptions {
-    /// Creates default connection options for `target`.
-    pub fn new(target: impl Into<String>) -> Self {
+    /// Creates default connection options for `target`, authenticated with `auth`.
+    pub fn new(target: impl Into<String>, auth: ClientAuth) -> Self {
         let target = target.into();
         let session = SessionConfig {
             host_address: target.clone(),
@@ -120,7 +119,7 @@ impl ConnectOptions {
             interface: None,
             handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT,
             session,
-            auth: None,
+            auth,
         }
     }
 }
@@ -151,7 +150,7 @@ impl ClientSession {
         self.bridge.peer_cert_sha256()
     }
 
-    /// Returns the host's Ed25519 node key when the session uses mutual TLS.
+    /// Returns the host's Ed25519 node key (the pinned key the session was made with).
     pub fn peer_node_key(&self) -> Option<[u8; NODE_KEY_LEN]> {
         self.bridge.connection.peer_node_key()
     }
@@ -176,13 +175,12 @@ pub async fn connect(options: ConnectOptions) -> Result<ClientSession> {
     };
 
     let transport = QuicClientTransport::new(transport_config);
-    let conn = match options.auth.clone() {
-        Some(auth) => transport.connect_mtls(target_addr, auth).await,
-        None => transport.connect(target_addr, "perigee.host").await,
-    }
-    .with_context(|| {
-        format!("Failed to establish QUIC connection to '{target_label}' ({target_addr})")
-    })?;
+    let conn = transport
+        .connect_mtls(target_addr, options.auth.clone())
+        .await
+        .with_context(|| {
+            format!("Failed to establish QUIC connection to '{target_label}' ({target_addr})")
+        })?;
 
     let (bridge, mut state_rx, video_rx, input_tx) =
         QuicSessionBridge::spawn(options.session, Arc::new(conn));
@@ -279,9 +277,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_succeeds_after_auth_response() {
-        let listener = QuicServerListener::bind(
+        let peers = LoopbackPeers::generate().unwrap();
+        let listener = QuicServerListener::bind_mtls(
             "127.0.0.1:0".parse().unwrap(),
             QuicTransportConfig::default(),
+            peers.server_auth(),
         )
         .expect("Failed to bind QUIC listener");
         let server_addr = listener.local_addr().unwrap();
@@ -311,9 +311,12 @@ mod tests {
             (listener, server_conn)
         });
 
-        let mut session = connect(ConnectOptions::new(server_addr.to_string()))
-            .await
-            .expect("connect should succeed");
+        let mut session = connect(ConnectOptions::new(
+            server_addr.to_string(),
+            peers.client_auth(),
+        ))
+        .await
+        .expect("connect should succeed");
 
         assert_eq!(session.state(), SessionState::Active);
         assert_eq!(session.peer_cert_sha256(), Some(expected_cert_hash));
@@ -326,9 +329,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_fails_when_host_rejects() {
-        let listener = QuicServerListener::bind(
+        let peers = LoopbackPeers::generate().unwrap();
+        let listener = QuicServerListener::bind_mtls(
             "127.0.0.1:0".parse().unwrap(),
             QuicTransportConfig::default(),
+            peers.server_auth(),
         )
         .expect("Failed to bind QUIC listener");
         let server_addr = listener.local_addr().unwrap();
@@ -353,7 +358,11 @@ mod tests {
             (listener, server_conn)
         });
 
-        let result = connect(ConnectOptions::new(server_addr.to_string())).await;
+        let result = connect(ConnectOptions::new(
+            server_addr.to_string(),
+            peers.client_auth(),
+        ))
+        .await;
         let Err(err) = result else {
             panic!("expected connect to fail when host rejects");
         };
@@ -368,9 +377,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_times_out_without_response() {
-        let listener = QuicServerListener::bind(
+        let peers = LoopbackPeers::generate().unwrap();
+        let listener = QuicServerListener::bind_mtls(
             "127.0.0.1:0".parse().unwrap(),
             QuicTransportConfig::default(),
+            peers.server_auth(),
         )
         .expect("Failed to bind QUIC listener");
         let server_addr = listener.local_addr().unwrap();
@@ -381,7 +392,7 @@ mod tests {
             (listener, server_conn)
         });
 
-        let mut opts = ConnectOptions::new(server_addr.to_string());
+        let mut opts = ConnectOptions::new(server_addr.to_string(), peers.client_auth());
         opts.handshake_timeout = Duration::from_millis(300);
 
         let result = tokio::time::timeout(Duration::from_secs(2), connect(opts))
@@ -429,8 +440,7 @@ mod tests {
             (listener, server_conn)
         });
 
-        let mut options = ConnectOptions::new(server_addr.to_string());
-        options.auth = Some(peers.client_auth());
+        let options = ConnectOptions::new(server_addr.to_string(), peers.client_auth());
         let session = connect(options).await.expect("mTLS connect should succeed");
 
         assert_eq!(session.state(), SessionState::Active);
@@ -455,11 +465,13 @@ mod tests {
             listener
         });
 
-        let mut options = ConnectOptions::new(server_addr.to_string());
-        options.auth = Some(ClientAuth {
-            identity: peers.client.clone(),
-            host_key: [0u8; 32],
-        });
+        let options = ConnectOptions::new(
+            server_addr.to_string(),
+            ClientAuth {
+                identity: peers.client.clone(),
+                host_key: [0u8; 32],
+            },
+        );
         let Err(err) = connect(options).await else {
             panic!("connect must refuse a host whose key is not pinned");
         };
