@@ -35,3 +35,10 @@ title = "BUG-0003 CLI: resolve_cli_command"
 status = "closed"
 severity = "medium"
 created_at = "2026-11-20T02:43:56Z"
+
+[[items.tasks]]
+id = "TASK-0061"
+title = "perigee connect pins host key; client identity / trust; load_client_auth"
+status = "open"
+severity = "medium"
+created_at = "2026-11-20T11:17:08Z"

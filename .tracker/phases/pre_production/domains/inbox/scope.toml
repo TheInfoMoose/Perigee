@@ -102,34 +102,34 @@ created_at = "2026-11-20T02:43:56Z"
 [[items.tasks]]
 id = "TASK-0049"
 title = "Host on mTLS: config_dir, --config-dir, TrustFileAuthorizer; loopback test trusts its client"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-20T02:43:56Z"
 
 [[items.tasks]]
 id = "TASK-0050"
 title = "perigee-host identity / trust add|list|remove"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-20T02:43:56Z"
 
 [[items.tasks]]
 id = "TASK-0052"
 title = "perigee connect pins host key; client identity / trust; load_client_auth"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-20T02:43:56Z"
 
 [[items.tasks]]
 id = "TASK-0053"
 title = "Delete AuthRequest, ServerHello, AuthMethod, auth_methods"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-20T02:43:56Z"
 
 [[items.tasks]]
 id = "TASK-0055"
 title = "ConnectOptions::new(target, auth); auth required"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-20T02:43:56Z"
