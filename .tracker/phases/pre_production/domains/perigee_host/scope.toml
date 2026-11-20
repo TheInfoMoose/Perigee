@@ -60,7 +60,7 @@ created_at = "2026-11-20T02:43:56Z"
 [[items.tasks]]
 id = "TASK-0051"
 title = "Daemon drops in-band auth (NistVault field, AuthRequest paths, channel binding, re-auth)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-20T02:43:56Z"
 
