@@ -95,7 +95,7 @@ created_at = "2026-11-19T01:59:36Z"
 [[items.tasks]]
 id = "TASK-0048"
 title = "ConnectOptions.auth: Option<ClientAuth>; ClientSession::peer_node_key"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-20T02:43:56Z"
 
