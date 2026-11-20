@@ -21,7 +21,7 @@ features = []
 [[items.tasks]]
 id = "TASK-0044"
 title = "aws-lc-rs provider only (approved lock change: untrusted 0.7.1)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-20T02:43:56Z"
 

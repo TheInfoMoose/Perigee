@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0044"
 type = "task"
 title = "aws-lc-rs provider only (approved lock change: untrusted 0.7.1)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "perigee_net"
 created_at = "2026-11-20T02:43:56Z"
-updated_at = "2026-11-20T02:43:56Z"
+updated_at = "2026-11-20T10:49:50Z"
 source_ref = "STEP 4D"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 463
 iteration_count = 1
+last_timer_session = "TASK-0044@2026-11-20T03:05:52Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-20"
+commit = "32d02b1"
+summary = "quinn/rustls/rcgen on aws-lc-rs only; lock adds untrusted 0.7.1, no version changes; ring only on quinn-proto's wasm target"
