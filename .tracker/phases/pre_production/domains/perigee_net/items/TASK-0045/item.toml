@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0045"
 type = "task"
 title = "NodeIdentity, hex helpers, node_key_from_certificate, default_config_dir"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "perigee_net"
 created_at = "2026-11-20T02:43:56Z"
-updated_at = "2026-11-20T02:43:56Z"
+updated_at = "2026-11-20T10:53:41Z"
 source_ref = "STEP 4E"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 3
 iteration_count = 1
+last_timer_session = "TASK-0045@2026-11-20T10:50:23Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-20"
+commit = "b3e3c08"
+summary = "NodeIdentity (0600, zeroized, redacted), self-signed cert, strict SPKI key extraction, hex helpers, config dir"
