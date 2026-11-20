@@ -376,7 +376,12 @@ impl ClientSessionPipeline {
                             m.rtt_ms = rtt_ms;
                         }
                         ControlMessage::LossReport { missing_frames } => {
-                            warn!(?missing_frames, "Loss report received from host");
+                            warn!(
+                                missing = missing_frames.len(),
+                                first = ?missing_frames.first(),
+                                last = ?missing_frames.last(),
+                                "Loss report received from host"
+                            );
                         }
                         _ => {}
                     },
