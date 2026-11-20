@@ -69,6 +69,20 @@ pub fn parse_cli_args(args: &[String], host_base: HostOptions) -> Result<CliComm
     }
 }
 
+/// Resolves the `perigee` command line. Only `perigee host` (a run) reads the host
+/// environment variables (through `get`); help, version and `connect` never do.
+pub fn resolve_cli_command(
+    args: &[String],
+    get: impl Fn(&str) -> Option<String>,
+) -> Result<CliCommand> {
+    match parse_cli_args(args, HostOptions::default())? {
+        CliCommand::Host(HostCommand::Run(_)) => {
+            parse_cli_args(args, HostOptions::from_env_with(get)?)
+        }
+        other => Ok(other),
+    }
+}
+
 fn parse_connect_args(args: &[String]) -> Result<CliCommand> {
     let mut target: Option<String> = None;
     let mut interface: Option<String> = None;
@@ -249,5 +263,24 @@ mod tests {
                 .contains("unknown command 'frobnicate'; run perigee --help"),
             "unexpected unknown command error: {unknown_err}"
         );
+    }
+
+    #[test]
+    fn test_resolve_cli_command_ignores_env_outside_host() {
+        let bad_env = |k: &str| (k == "PERIGEE_BIND_ADDR").then(|| "not-an-addr".to_string());
+        assert_eq!(
+            resolve_cli_command(&s(&["--help"]), bad_env).unwrap(),
+            CliCommand::Help
+        );
+        assert_eq!(
+            resolve_cli_command(&s(&["host", "--help"]), bad_env).unwrap(),
+            CliCommand::Host(HostCommand::Help)
+        );
+        assert!(matches!(
+            resolve_cli_command(&s(&["connect", "192.0.2.10:4433"]), bad_env).unwrap(),
+            CliCommand::Connect(_)
+        ));
+        let err = resolve_cli_command(&s(&["host"]), bad_env).unwrap_err();
+        assert!(format!("{err:#}").contains("PERIGEE_BIND_ADDR"));
     }
 }

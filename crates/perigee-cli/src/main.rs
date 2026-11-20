@@ -6,9 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
-use perigee_cli::{CliCommand, ConnectArgs, USAGE, parse_cli_args};
+use perigee_cli::{CliCommand, ConnectArgs, USAGE, resolve_cli_command};
 use perigee_client::{ConnectOptions, SessionState, connect};
-use perigee_host::{HOST_USAGE, HostCommand, HostOptions, bind_host, run_host, shutdown_signal};
+use perigee_host::{HOST_USAGE, HostCommand, bind_host, run_host, shutdown_signal};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
         .init();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match parse_cli_args(&args, HostOptions::from_env()?)? {
+    match resolve_cli_command(&args, |k| std::env::var(k).ok())? {
         CliCommand::Help => {
             println!("{USAGE}");
             Ok(())
