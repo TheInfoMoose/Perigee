@@ -10,12 +10,14 @@ pub mod identity;
 pub mod manager;
 pub mod metrics;
 pub mod socket;
+pub mod trust;
 
 pub use endpoint::*;
 pub use identity::*;
 pub use manager::*;
 pub use metrics::*;
 pub use socket::*;
+pub use trust::*;
 
 /// QUIC Transport Parameters & Configuration Options
 #[derive(Debug, Clone)]
