@@ -320,7 +320,6 @@ mod tests {
             client_id: String::from("c1"),
             client_name: String::from("test"),
             supported_codecs: vec![VideoCodec::AV1],
-            auth_methods: vec![],
         });
         assert!(!QuicSessionBridge::is_datagram_message(&hello_msg));
 

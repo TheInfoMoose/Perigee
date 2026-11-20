@@ -182,10 +182,6 @@ impl ClientSessionPipeline {
                     VideoCodec::H265,
                     VideoCodec::RawBgra,
                 ],
-                auth_methods: vec![
-                    perigee_protocol::AuthMethod::VaultToken,
-                    perigee_protocol::AuthMethod::Ed25519Signature,
-                ],
             });
             if wire_tx_handshake.send(handshake).await.is_ok() {
                 state_handshake.send_if_modified(|state| {

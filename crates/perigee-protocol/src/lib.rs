@@ -96,20 +96,8 @@ impl WireMessage {
                     client_id,
                     client_name,
                     supported_codecs,
-                    auth_methods,
                     ..
-                } => {
-                    client_id.len()
-                        + client_name.len()
-                        + supported_codecs.len()
-                        + auth_methods.len()
-                }
-                HandshakeMessage::ServerHello {
-                    server_id,
-                    auth_challenge,
-                    ..
-                } => server_id.len() + auth_challenge.len(),
-                HandshakeMessage::AuthRequest { credentials, .. } => credentials.len(),
+                } => client_id.len() + client_name.len() + supported_codecs.len(),
                 HandshakeMessage::AuthResponse {
                     session_token,
                     error_message,
@@ -159,17 +147,6 @@ pub enum HandshakeMessage {
         client_id: String,
         client_name: String,
         supported_codecs: Vec<VideoCodec>,
-        auth_methods: Vec<AuthMethod>,
-    },
-    ServerHello {
-        server_version: u32,
-        server_id: String,
-        selected_codec: VideoCodec,
-        auth_challenge: Vec<u8>,
-    },
-    AuthRequest {
-        auth_method: AuthMethod,
-        credentials: Vec<u8>,
     },
     AuthResponse {
         success: bool,
@@ -177,13 +154,6 @@ pub enum HandshakeMessage {
         error_message: Option<String>,
         requires_elevation: bool,
     },
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum AuthMethod {
-    Ed25519Signature,
-    VaultToken,
-    SystemUserPassword,
 }
 
 // ============================================================================
@@ -468,7 +438,6 @@ mod tests {
             client_id: "test-client-uuid".to_string(),
             client_name: "macOS Studio Client".to_string(),
             supported_codecs: vec![VideoCodec::AV1, VideoCodec::H265],
-            auth_methods: vec![AuthMethod::VaultToken, AuthMethod::Ed25519Signature],
         });
 
         let bytes = encode_wire_message(&hello).unwrap();

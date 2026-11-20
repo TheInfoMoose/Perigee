@@ -470,7 +470,7 @@ mod tests {
     use super::*;
     use crate::CaptureBackendType;
     use perigee_net::{ClientAuth, QuicClientTransport, QuicTransportConfig};
-    use perigee_protocol::{AuthMethod, HandshakeMessage, VideoCodec, WireMessage};
+    use perigee_protocol::{HandshakeMessage, VideoCodec, WireMessage};
     use tokio::sync::oneshot;
 
     #[tokio::test]
@@ -507,7 +507,6 @@ mod tests {
             client_id: "host-shutdown-client".to_string(),
             client_name: "Host Shutdown Viewer".to_string(),
             supported_codecs: vec![VideoCodec::AV1],
-            auth_methods: vec![AuthMethod::Ed25519Signature],
         };
         client_conn
             .send_uni_message(&WireMessage::Handshake(hello))

@@ -158,8 +158,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use perigee_protocol::{
-        AudioCodec, AudioDirection, AuthMethod, ControlMessage, HandshakeMessage, VideoCodec,
-        WireMessage,
+        AudioCodec, AudioDirection, ControlMessage, HandshakeMessage, VideoCodec, WireMessage,
     };
 
     #[tokio::test]
@@ -229,7 +228,6 @@ mod tests {
                 client_id: "viewer-client-01".to_string(),
                 client_name: "COSMIC Viewer".to_string(),
                 supported_codecs,
-                auth_methods: vec![AuthMethod::Ed25519Signature],
             }
         };
 
@@ -269,7 +267,6 @@ mod tests {
             client_id: "client-lifecycle-1".to_string(),
             client_name: "Linux Viewer".to_string(),
             supported_codecs: vec![VideoCodec::AV1],
-            auth_methods: vec![AuthMethod::Ed25519Signature],
         };
         let session_id_1 = daemon.handle_handshake(hello).await.unwrap();
         let session_1 = daemon

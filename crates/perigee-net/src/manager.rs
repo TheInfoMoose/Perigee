@@ -265,7 +265,6 @@ mod tests {
             client_id: "client-loopback-01".to_string(),
             client_name: "Perigee Test Viewer".to_string(),
             supported_codecs: vec![VideoCodec::AV1],
-            auth_methods: vec![],
         });
 
         client_conn

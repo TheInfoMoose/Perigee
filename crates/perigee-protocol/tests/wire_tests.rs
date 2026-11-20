@@ -2,7 +2,7 @@
 //! 4-byte little-endian length-prefixed framing, and `MAX_WIRE_FRAME_BYTES` bounds checks.
 
 use perigee_protocol::{
-    AudioCodec, AudioDirection, AudioFrameMessage, AuthMethod, ClipboardPayload, ColorSubsampling,
+    AudioCodec, AudioDirection, AudioFrameMessage, ClipboardPayload, ColorSubsampling,
     ControlMessage, ElementState, HandshakeMessage, InputEvent, KeyModifiers, MAX_WIRE_FRAME_BYTES,
     MonitorInfo, MouseButtonCode, PixelFormat, ProtocolError, TopologyMessage, TouchPhase,
     VideoCodec, VideoFrameMessage, VirtualChannelMessage, WheelUnit, WireMessage,
@@ -57,21 +57,6 @@ fn test_handshake_all_variants_roundtrip() {
                 VideoCodec::H264,
                 VideoCodec::RawBgra,
             ],
-            auth_methods: vec![
-                AuthMethod::Ed25519Signature,
-                AuthMethod::VaultToken,
-                AuthMethod::SystemUserPassword,
-            ],
-        }),
-        WireMessage::Handshake(HandshakeMessage::ServerHello {
-            server_version: 1,
-            server_id: "host-daemon-node-42".to_string(),
-            selected_codec: VideoCodec::AV1,
-            auth_challenge: vec![0x42; 32],
-        }),
-        WireMessage::Handshake(HandshakeMessage::AuthRequest {
-            auth_method: AuthMethod::Ed25519Signature,
-            credentials: vec![0xAB; 64],
         }),
         WireMessage::Handshake(HandshakeMessage::AuthResponse {
             success: true,

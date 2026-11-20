@@ -743,8 +743,8 @@ mod tests {
         LoopbackPeers, QuicClientTransport, QuicServerListener, QuicTransportConfig,
     };
     use perigee_protocol::{
-        AudioCodec, AudioDirection, AuthMethod, ClipboardPayload, ElementState, InputEvent,
-        MonitorInfo, MouseButtonCode, VirtualChannelMessage, encode_length_prefixed,
+        AudioCodec, AudioDirection, ClipboardPayload, ElementState, InputEvent, MonitorInfo,
+        MouseButtonCode, VirtualChannelMessage, encode_length_prefixed,
     };
 
     struct FailingCapturer;
@@ -904,7 +904,6 @@ mod tests {
             client_id: "loopback-quic-client".to_string(),
             client_name: "Loopback Viewer".to_string(),
             supported_codecs: vec![VideoCodec::AV1],
-            auth_methods: vec![AuthMethod::Ed25519Signature],
         };
 
         client_conn
@@ -1092,7 +1091,6 @@ mod tests {
             client_id: "client-close-quic-client".to_string(),
             client_name: "Loopback Viewer".to_string(),
             supported_codecs: vec![VideoCodec::AV1],
-            auth_methods: vec![AuthMethod::Ed25519Signature],
         };
 
         client_conn
@@ -1214,7 +1212,6 @@ mod tests {
             client_id: "concurrent-client-1".to_string(),
             client_name: "Viewer 1".to_string(),
             supported_codecs: vec![VideoCodec::AV1],
-            auth_methods: vec![AuthMethod::Ed25519Signature],
         };
         c1.send_uni_message(&WireMessage::Handshake(hello1))
             .await
@@ -1230,7 +1227,6 @@ mod tests {
             client_id: "concurrent-client-2".to_string(),
             client_name: "Viewer 2".to_string(),
             supported_codecs: vec![VideoCodec::H265],
-            auth_methods: vec![AuthMethod::Ed25519Signature],
         };
         c2.send_uni_message(&WireMessage::Handshake(hello2))
             .await
