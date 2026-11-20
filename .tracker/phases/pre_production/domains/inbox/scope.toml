@@ -17,7 +17,7 @@ created_at = "2026-11-19T01:59:16Z"
 
 [[items.tasks]]
 id = "TASK-0004"
-title = "The perigee CLI binary"
+title = "perigee CLI binary (TASK-0004). validate-step PASS, POST_GATE exit 0. Diff matches MUTATION_SPEC 1–6; lockfile adds only the perigee-cli block. Claude live run: perigee host --bind 127.0.0.1:47433 + perigee connect … --for 2 → Active, 57 frames, disconnected, both exit 0. fps/rtt read 0.0 (stand-in metrics). perigee-net/perigee-protocol deps unused until 3H"
 status = "closed"
 severity = "medium"
 created_at = "2026-11-19T01:59:36Z"
@@ -91,3 +91,45 @@ title = "Docs + skills rename. POST_GATE exit 0. Strike 1: README claimed the cl
 status = "closed"
 severity = "medium"
 created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0048"
+title = "ConnectOptions.auth: Option<ClientAuth>; ClientSession::peer_node_key"
+status = "open"
+severity = "medium"
+created_at = "2026-11-20T02:43:56Z"
+
+[[items.tasks]]
+id = "TASK-0049"
+title = "Host on mTLS: config_dir, --config-dir, TrustFileAuthorizer; loopback test trusts its client"
+status = "open"
+severity = "medium"
+created_at = "2026-11-20T02:43:56Z"
+
+[[items.tasks]]
+id = "TASK-0050"
+title = "perigee-host identity / trust add|list|remove"
+status = "open"
+severity = "medium"
+created_at = "2026-11-20T02:43:56Z"
+
+[[items.tasks]]
+id = "TASK-0052"
+title = "perigee connect pins host key; client identity / trust; load_client_auth"
+status = "open"
+severity = "medium"
+created_at = "2026-11-20T02:43:56Z"
+
+[[items.tasks]]
+id = "TASK-0053"
+title = "Delete AuthRequest, ServerHello, AuthMethod, auth_methods"
+status = "open"
+severity = "medium"
+created_at = "2026-11-20T02:43:56Z"
+
+[[items.tasks]]
+id = "TASK-0055"
+title = "ConnectOptions::new(target, auth); auth required"
+status = "open"
+severity = "medium"
+created_at = "2026-11-20T02:43:56Z"

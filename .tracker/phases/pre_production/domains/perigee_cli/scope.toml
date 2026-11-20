@@ -18,6 +18,20 @@ features = []
 [[items.tasks]]
 id = "TASK-0038"
 title = "Drop unused perigee-net dependency from perigee-cli"
-status = "open"
+status = "closed"
 severity = "low"
 created_at = "2026-11-20T00:35:54Z"
+
+[[items.tasks]]
+id = "TASK-0040"
+title = "Print host node key instead of cert SHA-256 in perigee connect"
+status = "pending"
+severity = "low"
+created_at = "2026-11-20T02:41:44Z"
+
+[[items.tasks]]
+id = "TASK-0043"
+title = "BUG-0003 CLI: resolve_cli_command"
+status = "open"
+severity = "medium"
+created_at = "2026-11-20T02:43:56Z"

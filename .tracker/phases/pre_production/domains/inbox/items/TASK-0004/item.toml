@@ -3,12 +3,12 @@ schema_version = 2
 [item]
 id = "TASK-0004"
 type = "task"
-title = "The perigee CLI binary"
+title = "perigee CLI binary (TASK-0004). validate-step PASS, POST_GATE exit 0. Diff matches MUTATION_SPEC 1–6; lockfile adds only the perigee-cli block. Claude live run: perigee host --bind 127.0.0.1:47433 + perigee connect … --for 2 → Active, 57 frames, disconnected, both exit 0. fps/rtt read 0.0 (stand-in metrics). perigee-net/perigee-protocol deps unused until 3H"
 status = "closed"
 severity = "medium"
 scope_ref = "inbox"
 created_at = "2026-11-19T01:59:36Z"
-updated_at = "2026-11-20T00:24:17Z"
+updated_at = "2026-11-20T02:43:56Z"
 source_ref = "STEP 3G"
 
 [effort]

@@ -3,12 +3,12 @@ schema_version = 2
 [item]
 id = "TASK-0003"
 type = "task"
-title = "UI uses the client connect API"
+title = "UI uses the client connect API. First Orrery run (agy-impl, 6m45s; validator stage skipped by orchestrator, see orrery-setup tuning). validate-step check PASS, POST_GATE exit 0. Diff matches MUTATION_SPEC 1–6; extras accepted: take_video_rx() None guard, lock released before stop()"
 status = "closed"
 severity = "medium"
 scope_ref = "perigee_ui"
 created_at = "2026-11-19T01:59:36Z"
-updated_at = "2026-11-19T02:33:05Z"
+updated_at = "2026-11-20T02:43:56Z"
 source_ref = "STEP 3F"
 
 [effort]
