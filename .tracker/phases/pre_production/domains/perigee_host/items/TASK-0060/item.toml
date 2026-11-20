@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0060"
 type = "task"
 title = "perigee-host identity / trust add|list|remove"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "perigee_host"
 created_at = "2026-11-20T11:17:08Z"
-updated_at = "2026-11-20T11:17:08Z"
+updated_at = "2026-11-20T11:54:43Z"
 source_ref = "STEP 4J"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 5
 iteration_count = 1
+last_timer_session = "TASK-0060@2026-11-20T11:49:42Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-20"
+commit = "522449a"
+summary = "HostAdmin + run_host_admin: perigee-host identity, trust add/list/remove (also via perigee host)"
