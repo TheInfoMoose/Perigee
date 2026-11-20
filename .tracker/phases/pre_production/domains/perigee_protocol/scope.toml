@@ -17,6 +17,6 @@ features = []
 [[items.tasks]]
 id = "TASK-0062"
 title = "Delete AuthRequest, ServerHello, AuthMethod, auth_methods"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-20T11:17:08Z"
