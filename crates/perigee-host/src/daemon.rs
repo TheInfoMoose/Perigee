@@ -1,23 +1,23 @@
 //! Elevated Host Session Controller & Daemon Service Orchestrator.
 //!
 //! Coordinates per-session GPU frame capture, hardware/software video encoding,
-//! OS input injection, 20 ms Opus audio loopback, and [`NistVault`] cryptographic
-//! handshake authentication (`Ed25519Signature` TLS 1.3 channel-bound challenge
-//! verification and `VaultToken` validation).
+//! OS input injection, and 20 ms Opus audio loopback. Peers are authenticated by mutual TLS
+//! in `perigee-net` before a session handshake starts; the daemon only validates the
+//! `ClientHello`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use tokio::sync::{Mutex, mpsc, watch};
 use tracing::{debug, error, info, warn};
 
 use perigee_channels::VirtualChannelManager;
-use perigee_common::{NistVault, RuntimeEnvironment};
-use perigee_net::QuicConnectionManager;
+use perigee_common::RuntimeEnvironment;
+use perigee_net::{QuicConnectionManager, node_key_to_hex};
 use perigee_protocol::{
-    AuthMethod, ControlMessage, HandshakeMessage, VideoCodec, WireMessage, decode_length_prefixed,
+    ControlMessage, HandshakeMessage, VideoCodec, WireMessage, decode_length_prefixed,
 };
 
 use crate::audio::HostAudioCapturer;
@@ -26,10 +26,6 @@ use crate::backends::{
 };
 use crate::encoder::{EncoderConfig, MacOsVideoToolboxEncoder, SoftwareVideoEncoder, VideoEncoder};
 use crate::{CaptureBackendType, HostInputInjector, NativeInputInjector};
-
-/// Minimum byte length for an `AuthMethod::Ed25519Signature` credential payload:
-/// `[verifying_key: 32][tls_cert_sha256: 32][signature: 64][challenge: >= 1]`.
-pub const ED25519_AUTH_HEADER_BYTES: usize = 32 + 32 + 64;
 
 /// Active Session Controller on Host Daemon
 pub struct HostSessionEngine {
@@ -266,18 +262,12 @@ pub struct PerigeeHostDaemon {
     pub host_name: String,
     pub backend: CaptureBackendType,
     pub runtime_env: RuntimeEnvironment,
-    pub vault: NistVault,
     pub active_sessions: Arc<Mutex<Vec<Arc<HostSessionEngine>>>>,
 }
 
 impl PerigeeHostDaemon {
-    /// Creates a new [`PerigeeHostDaemon`] with the default [`NistVault`] namespace.
+    /// Creates a new [`PerigeeHostDaemon`].
     pub fn new(host_name: String, backend: CaptureBackendType) -> Self {
-        Self::with_vault(host_name, backend, NistVault::default())
-    }
-
-    /// Creates a new [`PerigeeHostDaemon`] with a custom [`NistVault`] instance.
-    pub fn with_vault(host_name: String, backend: CaptureBackendType, vault: NistVault) -> Self {
         let runtime_env = RuntimeEnvironment::detect();
         info!(
             host_name = %host_name,
@@ -290,7 +280,6 @@ impl PerigeeHostDaemon {
             host_name,
             backend,
             runtime_env,
-            vault,
             active_sessions: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -313,53 +302,12 @@ impl PerigeeHostDaemon {
         }
     }
 
-    /// Packs an Ed25519 channel-bound challenge response into a [`HandshakeMessage::AuthRequest`].
-    ///
-    /// Binary credential layout:
-    /// `[verifying_key (32 bytes) || tls_cert_sha256 (32 bytes) || signature (64 bytes) || challenge]`
-    pub fn build_ed25519_auth_request(
-        verifying_key: &[u8; 32],
-        tls_cert_sha256: &[u8; 32],
-        challenge: &[u8],
-        signature: &[u8],
-    ) -> HandshakeMessage {
-        let mut credentials = Vec::with_capacity(ED25519_AUTH_HEADER_BYTES + challenge.len());
-        credentials.extend_from_slice(verifying_key);
-        credentials.extend_from_slice(tls_cert_sha256);
-        credentials.extend_from_slice(signature);
-        credentials.extend_from_slice(challenge);
-
-        HandshakeMessage::AuthRequest {
-            auth_method: AuthMethod::Ed25519Signature,
-            credentials,
-        }
-    }
-
-    /// Verifies a TLS 1.3 channel-bound Ed25519 handshake challenge using [`NistVault`].
-    pub fn verify_handshake_challenge(
-        &self,
-        verifying_key_bytes: &[u8; 32],
-        challenge: &[u8],
-        tls_cert_sha256: &[u8; 32],
-        signature_bytes: &[u8],
-    ) -> Result<()> {
-        if challenge.is_empty() {
-            bail!("Handshake challenge payload must not be empty");
-        }
-        NistVault::verify_channel_bound_challenge(
-            verifying_key_bytes,
-            challenge,
-            tls_cert_sha256,
-            signature_bytes,
-        )
-        .context("Channel-bound Ed25519 handshake challenge verification failed")
-    }
-
-    /// Authenticates client connection request via [`NistVault`] and returns a new session ID.
+    /// Validates a client's opening `ClientHello` and returns a new session ID. The peer has
+    /// already been authenticated by mutual TLS before this runs.
     pub async fn handle_handshake(&self, handshake: HandshakeMessage) -> Result<String> {
         info!(
             client_hello = ?handshake,
-            "Processing incoming client connection handshake"
+            "Processing incoming client session handshake"
         );
 
         match handshake {
@@ -367,7 +315,6 @@ impl PerigeeHostDaemon {
                 protocol_version,
                 client_id,
                 supported_codecs,
-                auth_methods,
                 ..
             } => {
                 if protocol_version == 0 {
@@ -379,74 +326,9 @@ impl PerigeeHostDaemon {
                 if supported_codecs.is_empty() {
                     bail!("ClientHello must advertise at least one VideoCodec");
                 }
-                if auth_methods.is_empty() {
-                    bail!("ClientHello must advertise at least one AuthMethod");
-                }
                 Ok(uuid::Uuid::new_v4().to_string())
             }
-            HandshakeMessage::AuthRequest {
-                auth_method,
-                credentials,
-            } => match auth_method {
-                AuthMethod::Ed25519Signature => {
-                    if credentials.len() <= ED25519_AUTH_HEADER_BYTES {
-                        bail!(
-                            "Invalid Ed25519Signature AuthRequest credential length {} (expected > {} bytes)",
-                            credentials.len(),
-                            ED25519_AUTH_HEADER_BYTES
-                        );
-                    }
-                    let verifying_key: [u8; 32] = credentials[0..32]
-                        .try_into()
-                        .map_err(|_| anyhow!("Invalid 32-byte Ed25519 verifying key slice"))?;
-                    let tls_cert_sha256: [u8; 32] = credentials[32..64]
-                        .try_into()
-                        .map_err(|_| anyhow!("Invalid 32-byte TLS cert SHA-256 slice"))?;
-                    let signature = &credentials[64..128];
-                    let challenge = &credentials[128..];
-
-                    self.verify_handshake_challenge(
-                        &verifying_key,
-                        challenge,
-                        &tls_cert_sha256,
-                        signature,
-                    )?;
-                    Ok(uuid::Uuid::new_v4().to_string())
-                }
-                AuthMethod::VaultToken => {
-                    let cred_str = std::str::from_utf8(&credentials)
-                        .context("VaultToken credentials must be valid UTF-8")?
-                        .trim();
-                    if cred_str.is_empty() {
-                        bail!("VaultToken credentials must not be empty");
-                    }
-
-                    let (profile_id, presented_token) =
-                        cred_str.split_once(':').unwrap_or(("default", cred_str));
-
-                    let stored = self.vault.get_session_token(profile_id).with_context(|| {
-                        format!("No session token stored in NistVault for profile '{profile_id}'")
-                    })?;
-
-                    if stored.session_token != presented_token {
-                        bail!("Presented VaultToken does not match stored NistVault token");
-                    }
-                    if stored.expires_at == 0 {
-                        bail!("Stored NistVault session token is expired or zeroized");
-                    }
-
-                    Ok(uuid::Uuid::new_v4().to_string())
-                }
-                AuthMethod::SystemUserPassword => {
-                    if credentials.is_empty() {
-                        bail!("SystemUserPassword credentials must not be empty");
-                    }
-                    Ok(uuid::Uuid::new_v4().to_string())
-                }
-            },
-            HandshakeMessage::ServerHello { .. } | HandshakeMessage::AuthResponse { .. } => {
-                bail!("Unexpected server-originated HandshakeMessage received by host daemon")
-            }
+            _ => bail!("Expected ClientHello as the first session handshake message"),
         }
     }
 
@@ -518,8 +400,8 @@ impl PerigeeHostDaemon {
     }
 
     /// Serves an incoming [`QuicConnectionManager`] connection:
-    /// 1. Validates the client's handshake (`ClientHello` or `AuthRequest`) via [`NistVault`] and
-    ///    replies with [`HandshakeMessage::AuthResponse`].
+    /// 1. Validates the client's `ClientHello` (the peer is already authenticated by mutual TLS)
+    ///    and replies with [`HandshakeMessage::AuthResponse`].
     /// 2. Provisions a new [`HostSessionEngine`] and [`VirtualChannelManager`].
     /// 3. Starts [`HostSessionEngine::run_capture_loop`] and pumps outbound video/audio frames over
     ///    QUIC streams.
@@ -550,19 +432,6 @@ impl PerigeeHostDaemon {
             _ => VideoCodec::AV1,
         };
 
-        if let HandshakeMessage::AuthRequest {
-            auth_method: AuthMethod::Ed25519Signature,
-            ref credentials,
-        } = handshake
-            && credentials.len() >= 64
-            && let Some(expected_cert_sha256) = conn.peer_cert_sha256()
-            && credentials[32..64] != expected_cert_sha256
-        {
-            let err_msg = "TLS 1.3 channel-binding certificate SHA-256 digest mismatch";
-            Self::send_auth_failure_and_retain(conn, err_msg.to_string()).await;
-            bail!("{err_msg}");
-        }
-
         let session_id = match self.handle_handshake(handshake).await {
             Ok(id) => id,
             Err(e) => {
@@ -570,6 +439,15 @@ impl PerigeeHostDaemon {
                 return Err(e);
             }
         };
+        info!(
+            session_id = %session_id,
+            remote = %conn.connection.remote_address(),
+            peer_node_key = %conn
+                .peer_node_key()
+                .map(|key| node_key_to_hex(&key))
+                .unwrap_or_else(|| "none (legacy transport)".to_string()),
+            "Admitted client session"
+        );
 
         let encoder_config = EncoderConfig {
             codec: preferred_codec,
@@ -710,50 +588,6 @@ impl PerigeeHostDaemon {
                                 "Failed to route inbound stream virtual channel message"
                             );
                         }
-                    }
-                    Ok(WireMessage::Handshake(HandshakeMessage::AuthRequest {
-                        auth_method,
-                        credentials,
-                    })) => {
-                        let valid = match auth_method {
-                            AuthMethod::Ed25519Signature => {
-                                if credentials.len() > ED25519_AUTH_HEADER_BYTES {
-                                    let verifying_key: [u8; 32] =
-                                        credentials[0..32].try_into().unwrap_or([0u8; 32]);
-                                    let tls_cert_sha256: [u8; 32] =
-                                        credentials[32..64].try_into().unwrap_or([0u8; 32]);
-                                    let signature = &credentials[64..128];
-                                    let challenge = &credentials[128..];
-                                    let cert_matches = conn_uni
-                                        .peer_cert_sha256()
-                                        .is_none_or(|expected| expected == tls_cert_sha256);
-                                    cert_matches
-                                        && NistVault::verify_channel_bound_challenge(
-                                            &verifying_key,
-                                            challenge,
-                                            &tls_cert_sha256,
-                                            signature,
-                                        )
-                                        .is_ok()
-                                } else {
-                                    false
-                                }
-                            }
-                            AuthMethod::SystemUserPassword => !credentials.is_empty(),
-                            AuthMethod::VaultToken => !credentials.is_empty(),
-                        };
-                        let _ = conn_uni
-                            .send_uni_message(&WireMessage::Handshake(
-                                HandshakeMessage::AuthResponse {
-                                    success: valid,
-                                    session_token: valid.then(|| session_uni.session_id.clone()),
-                                    error_message: (!valid).then(|| {
-                                        "In-session handshake authentication failed".to_string()
-                                    }),
-                                    requires_elevation: false,
-                                },
-                            ))
-                            .await;
                     }
                     Ok(msg) => {
                         if let Err(e) = session_uni.handle_incoming_wire_message(msg).await {
@@ -903,11 +737,14 @@ impl PerigeeHostDaemon {
 mod tests {
     use super::*;
     use crate::CapturedFrame;
+    use anyhow::anyhow;
     use perigee_channels::ClipboardContent;
-    use perigee_net::{QuicClientTransport, QuicServerListener, QuicTransportConfig};
+    use perigee_net::{
+        LoopbackPeers, QuicClientTransport, QuicServerListener, QuicTransportConfig,
+    };
     use perigee_protocol::{
-        AudioCodec, AudioDirection, ClipboardPayload, ElementState, InputEvent, MonitorInfo,
-        MouseButtonCode, VirtualChannelMessage, encode_length_prefixed,
+        AudioCodec, AudioDirection, AuthMethod, ClipboardPayload, ElementState, InputEvent,
+        MonitorInfo, MouseButtonCode, VirtualChannelMessage, encode_length_prefixed,
     };
 
     struct FailingCapturer;
@@ -1020,16 +857,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_serve_connection_over_loopback_quic() {
-        let vault = NistVault::new("test.perigee.server.serve_connection");
-        let daemon = Arc::new(PerigeeHostDaemon::with_vault(
+        let peers = LoopbackPeers::generate().unwrap();
+        let client_key = peers.client.public_key();
+        let daemon = Arc::new(PerigeeHostDaemon::new(
             "loopback-host-daemon".to_string(),
             CaptureBackendType::WaylandPipeWire,
-            vault,
         ));
 
-        let listener = QuicServerListener::bind(
+        let listener = QuicServerListener::bind_mtls(
             "127.0.0.1:0".parse().unwrap(),
             QuicTransportConfig::default(),
+            peers.server_auth(),
         )
         .expect("Failed to bind QUIC listener");
         let server_addr = listener.local_addr().unwrap();
@@ -1041,16 +879,17 @@ mod tests {
                 .accept()
                 .await
                 .expect("Server failed to accept QUIC connection");
+            assert_eq!(server_conn.peer_node_key(), Some(client_key));
             let session = daemon_server
                 .serve_connection(server_conn)
                 .await
-                .expect("serve_connection should succeed for valid Ed25519 handshake");
+                .expect("serve_connection should succeed for a valid ClientHello");
             (listener, session)
         });
 
         let client = QuicClientTransport::new(QuicTransportConfig::default());
         let client_conn = client
-            .connect(server_addr, "perigee.host")
+            .connect_mtls(server_addr, peers.client_auth())
             .await
             .expect("Client failed to connect to QUIC listener");
 
@@ -1059,25 +898,19 @@ mod tests {
             .expect("Client should capture server TLS 1.3 leaf cert SHA-256");
         assert_eq!(peer_cert_sha256, expected_cert_sha256);
 
-        // 1. Send channel-bound Ed25519 AuthRequest over unidirectional stream
-        let (signing_key, verifying_key) = daemon
-            .vault
-            .get_or_create_ed25519_identity("loopback_quic_client")
-            .expect("Should create Ed25519 identity");
-        let challenge = b"perigee-serve-connection-loopback-challenge";
-        let signature =
-            NistVault::sign_channel_bound_challenge(&signing_key, challenge, &peer_cert_sha256);
-        let auth_req = PerigeeHostDaemon::build_ed25519_auth_request(
-            &verifying_key.to_bytes(),
-            &peer_cert_sha256,
-            challenge,
-            &signature,
-        );
+        // 1. Send ClientHello (the connection is already authenticated by mutual TLS)
+        let hello = HandshakeMessage::ClientHello {
+            protocol_version: 1,
+            client_id: "loopback-quic-client".to_string(),
+            client_name: "Loopback Viewer".to_string(),
+            supported_codecs: vec![VideoCodec::AV1],
+            auth_methods: vec![AuthMethod::Ed25519Signature],
+        };
 
         client_conn
-            .send_uni_message(&WireMessage::Handshake(auth_req))
+            .send_uni_message(&WireMessage::Handshake(hello))
             .await
-            .expect("Client failed to send AuthRequest");
+            .expect("Client failed to send ClientHello");
 
         // 2. Receive AuthResponse from serve_connection
         let auth_resp_wire =
@@ -1215,16 +1048,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_removed_when_client_connection_closes() {
-        let vault = NistVault::new("test.perigee.server.client_close");
-        let daemon = Arc::new(PerigeeHostDaemon::with_vault(
+        let peers = LoopbackPeers::generate().unwrap();
+        let daemon = Arc::new(PerigeeHostDaemon::new(
             "client-close-host-daemon".to_string(),
             CaptureBackendType::WaylandPipeWire,
-            vault,
         ));
 
-        let listener = QuicServerListener::bind(
+        let listener = QuicServerListener::bind_mtls(
             "127.0.0.1:0".parse().unwrap(),
             QuicTransportConfig::default(),
+            peers.server_auth(),
         )
         .expect("Failed to bind QUIC listener");
         let server_addr = listener.local_addr().unwrap();
@@ -1245,7 +1078,7 @@ mod tests {
 
         let client = QuicClientTransport::new(QuicTransportConfig::default());
         let client_conn = client
-            .connect(server_addr, "perigee.host")
+            .connect_mtls(server_addr, peers.client_auth())
             .await
             .expect("Client failed to connect to QUIC listener");
 
@@ -1254,24 +1087,18 @@ mod tests {
             .expect("Client should capture server TLS 1.3 leaf cert SHA-256");
         assert_eq!(peer_cert_sha256, expected_cert_sha256);
 
-        let (signing_key, verifying_key) = daemon
-            .vault
-            .get_or_create_ed25519_identity("client_close_quic_client")
-            .expect("Should create Ed25519 identity");
-        let challenge = b"perigee-client-close-loopback-challenge";
-        let signature =
-            NistVault::sign_channel_bound_challenge(&signing_key, challenge, &peer_cert_sha256);
-        let auth_req = PerigeeHostDaemon::build_ed25519_auth_request(
-            &verifying_key.to_bytes(),
-            &peer_cert_sha256,
-            challenge,
-            &signature,
-        );
+        let hello = HandshakeMessage::ClientHello {
+            protocol_version: 1,
+            client_id: "client-close-quic-client".to_string(),
+            client_name: "Loopback Viewer".to_string(),
+            supported_codecs: vec![VideoCodec::AV1],
+            auth_methods: vec![AuthMethod::Ed25519Signature],
+        };
 
         client_conn
-            .send_uni_message(&WireMessage::Handshake(auth_req))
+            .send_uni_message(&WireMessage::Handshake(hello))
             .await
-            .expect("Client failed to send AuthRequest");
+            .expect("Client failed to send ClientHello");
 
         let auth_resp_wire =
             tokio::time::timeout(Duration::from_secs(5), client_conn.recv_uni_message())
@@ -1310,55 +1137,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_serve_connection_rejects_mitm_cert_mismatch_and_concurrent_sessions() {
-        let vault = NistVault::new("test.perigee.server.serve_connection_mitm");
-        let daemon = Arc::new(PerigeeHostDaemon::with_vault(
-            "mitm-host-daemon".to_string(),
+    async fn test_serve_connection_rejects_non_hello_and_isolates_concurrent_sessions() {
+        let peers = LoopbackPeers::generate().unwrap();
+        let daemon = Arc::new(PerigeeHostDaemon::new(
+            "concurrent-host-daemon".to_string(),
             CaptureBackendType::WaylandPipeWire,
-            vault,
         ));
 
         let listener = Arc::new(
-            QuicServerListener::bind(
+            QuicServerListener::bind_mtls(
                 "127.0.0.1:0".parse().unwrap(),
                 QuicTransportConfig::default(),
+                peers.server_auth(),
             )
             .expect("Failed to bind QUIC listener"),
         );
         let server_addr = listener.local_addr().unwrap();
 
-        // Pass `server_conn` by value (matching `main.rs` call pattern) and verify client still receives `AuthResponse { success: false }`
+        // A first handshake message other than ClientHello gets AuthResponse { success: false }
         let daemon_server = daemon.clone();
-        let listener_mitm = listener.clone();
+        let listener_bad = listener.clone();
         let server_task = tokio::spawn(async move {
-            let server_conn = listener_mitm.accept().await.unwrap();
+            let server_conn = listener_bad.accept().await.unwrap();
             daemon_server.serve_connection(server_conn).await
         });
 
         let client = QuicClientTransport::new(QuicTransportConfig::default());
         let client_conn = client
-            .connect(server_addr, "perigee.host")
+            .connect_mtls(server_addr, peers.client_auth())
             .await
             .expect("Client failed to connect");
 
-        // Sign a challenge bound to a spoofed MITM certificate hash ([0xEE; 32]) instead of the server's actual cert
-        let (signing_key, verifying_key) = daemon
-            .vault
-            .get_or_create_ed25519_identity("mitm_test_client")
-            .unwrap();
-        let spoofed_cert_sha256 = [0xEEu8; 32];
-        let challenge = b"mitm-spoofed-challenge";
-        let signature =
-            NistVault::sign_channel_bound_challenge(&signing_key, challenge, &spoofed_cert_sha256);
-        let mitm_req = PerigeeHostDaemon::build_ed25519_auth_request(
-            &verifying_key.to_bytes(),
-            &spoofed_cert_sha256,
-            challenge,
-            &signature,
-        );
-
         client_conn
-            .send_uni_message(&WireMessage::Handshake(mitm_req))
+            .send_uni_message(&WireMessage::Handshake(HandshakeMessage::AuthResponse {
+                success: true,
+                session_token: None,
+                error_message: None,
+                requires_elevation: false,
+            }))
             .await
             .unwrap();
 
@@ -1374,7 +1190,7 @@ mod tests {
         let srv_res = server_task.await.unwrap();
         assert!(
             srv_res.is_err(),
-            "serve_connection must reject mismatched TLS 1.3 cert fingerprint"
+            "serve_connection must refuse a first message that is not ClientHello"
         );
         assert_eq!(daemon.active_session_count().await, 0);
 
@@ -1389,7 +1205,10 @@ mod tests {
             (s1, s2)
         });
 
-        let c1 = client.connect(server_addr, "perigee.host").await.unwrap();
+        let c1 = client
+            .connect_mtls(server_addr, peers.client_auth())
+            .await
+            .unwrap();
         let hello1 = HandshakeMessage::ClientHello {
             protocol_version: 1,
             client_id: "concurrent-client-1".to_string(),
@@ -1402,7 +1221,10 @@ mod tests {
             .unwrap();
         let _ = c1.recv_uni_message().await.unwrap();
 
-        let c2 = client.connect(server_addr, "perigee.host").await.unwrap();
+        let c2 = client
+            .connect_mtls(server_addr, peers.client_auth())
+            .await
+            .unwrap();
         let hello2 = HandshakeMessage::ClientHello {
             protocol_version: 1,
             client_id: "concurrent-client-2".to_string(),

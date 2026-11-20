@@ -49,7 +49,7 @@ pub use backends::{
 };
 
 pub mod daemon;
-pub use daemon::{ED25519_AUTH_HEADER_BYTES, HostSessionEngine, PerigeeHostDaemon};
+pub use daemon::{HostSessionEngine, PerigeeHostDaemon};
 
 pub mod encoder;
 pub use encoder::{EncoderConfig, MacOsVideoToolboxEncoder, SoftwareVideoEncoder, VideoEncoder};
@@ -157,7 +157,6 @@ mod tests {
     use std::sync::atomic::Ordering;
     use tokio::sync::mpsc;
 
-    use perigee_common::{NistVault, VaultTokenModel};
     use perigee_protocol::{
         AudioCodec, AudioDirection, AuthMethod, ControlMessage, HandshakeMessage, VideoCodec,
         WireMessage,
@@ -219,126 +218,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handshake_challenge_and_vault_token_verification() {
-        let vault = NistVault::new("test.perigee.server.handshake");
-        let daemon = PerigeeHostDaemon::with_vault(
+    async fn test_handle_handshake_accepts_only_client_hello() {
+        let daemon = PerigeeHostDaemon::new(
             "test-host-daemon".to_string(),
             CaptureBackendType::WaylandPipeWire,
-            vault,
         );
-
-        // 1. Valid ClientHello negotiation returns a session UUID
-        let hello = HandshakeMessage::ClientHello {
-            protocol_version: 1,
-            client_id: "viewer-client-01".to_string(),
-            client_name: "COSMIC Viewer".to_string(),
-            supported_codecs: vec![VideoCodec::AV1, VideoCodec::H265],
-            auth_methods: vec![AuthMethod::Ed25519Signature, AuthMethod::VaultToken],
+        let hello = |protocol_version: u32, supported_codecs: Vec<VideoCodec>| {
+            HandshakeMessage::ClientHello {
+                protocol_version,
+                client_id: "viewer-client-01".to_string(),
+                client_name: "COSMIC Viewer".to_string(),
+                supported_codecs,
+                auth_methods: vec![AuthMethod::Ed25519Signature],
+            }
         };
-        let hello_session_id = daemon
-            .handle_handshake(hello)
+
+        let session_id = daemon
+            .handle_handshake(hello(1, vec![VideoCodec::AV1, VideoCodec::H265]))
             .await
-            .expect("Valid ClientHello should succeed");
-        assert!(!hello_session_id.is_empty());
+            .expect("a valid ClientHello is accepted");
+        assert!(!session_id.is_empty());
 
-        // Reject ClientHello with protocol_version 0
-        let bad_hello = HandshakeMessage::ClientHello {
-            protocol_version: 0,
-            client_id: "viewer-client-01".to_string(),
-            client_name: "COSMIC Viewer".to_string(),
-            supported_codecs: vec![VideoCodec::AV1],
-            auth_methods: vec![AuthMethod::Ed25519Signature],
-        };
-        assert!(daemon.handle_handshake(bad_hello).await.is_err());
-
-        // 2. Ed25519 TLS 1.3 channel-bound challenge verification
-        let (signing_key, verifying_key) = daemon
-            .vault
-            .get_or_create_ed25519_identity("server_handshake_test_peer")
-            .expect("Should generate Ed25519 identity");
-        let challenge = b"perigee-server-nonce-challenge-32bytes";
-        let tls_cert_sha256 = [0x5Au8; 32];
-        let signature =
-            NistVault::sign_channel_bound_challenge(&signing_key, challenge, &tls_cert_sha256);
-
-        let auth_req = PerigeeHostDaemon::build_ed25519_auth_request(
-            &verifying_key.to_bytes(),
-            &tls_cert_sha256,
-            challenge,
-            &signature,
-        );
-        let ed_session_id = daemon
-            .handle_handshake(auth_req)
-            .await
-            .expect("Valid channel-bound Ed25519 AuthRequest should succeed");
-        assert!(!ed_session_id.is_empty());
-
-        // Tampered TLS certificate fingerprint must fail MITM channel binding check
-        let wrong_cert_sha256 = [0xFFu8; 32];
-        let mitm_req = PerigeeHostDaemon::build_ed25519_auth_request(
-            &verifying_key.to_bytes(),
-            &wrong_cert_sha256,
-            challenge,
-            &signature,
-        );
         assert!(
-            daemon.handle_handshake(mitm_req).await.is_err(),
-            "Mismatched TLS certificate fingerprint must be rejected"
+            daemon
+                .handle_handshake(hello(0, vec![VideoCodec::AV1]))
+                .await
+                .is_err()
         );
+        assert!(daemon.handle_handshake(hello(1, vec![])).await.is_err());
 
-        // Tampered signature bytes must fail verification
-        let mut bad_sig = signature.clone();
-        bad_sig[0] ^= 0xFF;
-        let bad_sig_req = PerigeeHostDaemon::build_ed25519_auth_request(
-            &verifying_key.to_bytes(),
-            &tls_cert_sha256,
-            challenge,
-            &bad_sig,
-        );
-        assert!(
-            daemon.handle_handshake(bad_sig_req).await.is_err(),
-            "Tampered Ed25519 signature must be rejected"
-        );
-
-        // 3. NistVault session token authentication
-        let token_model = VaultTokenModel {
-            session_token: "nist-vault-secret-session-token-99".to_string(),
-            auth_method: "Ed25519+P2P".to_string(),
-            expires_at: 2_000_000_000,
+        let not_hello = HandshakeMessage::AuthResponse {
+            success: true,
+            session_token: None,
+            error_message: None,
+            requires_elevation: false,
         };
-        daemon
-            .vault
-            .store_session_token("workstation_alpha", &token_model)
-            .expect("Should store session token in NistVault");
-
-        let valid_token_req = HandshakeMessage::AuthRequest {
-            auth_method: AuthMethod::VaultToken,
-            credentials: b"workstation_alpha:nist-vault-secret-session-token-99".to_vec(),
-        };
-        let token_session_id = daemon
-            .handle_handshake(valid_token_req)
-            .await
-            .expect("Matching NistVault token should authenticate");
-        assert!(!token_session_id.is_empty());
-
-        let invalid_token_req = HandshakeMessage::AuthRequest {
-            auth_method: AuthMethod::VaultToken,
-            credentials: b"workstation_alpha:wrong-token-value".to_vec(),
-        };
-        assert!(
-            daemon.handle_handshake(invalid_token_req).await.is_err(),
-            "Mismatched NistVault token must be rejected"
-        );
-
-        let _ = daemon.vault.delete_session_token("workstation_alpha");
+        assert!(daemon.handle_handshake(not_hello).await.is_err());
     }
 
     #[tokio::test]
     async fn test_daemon_session_lifecycle_and_audio_loopback() {
-        let daemon = PerigeeHostDaemon::with_vault(
+        let daemon = PerigeeHostDaemon::new(
             "lifecycle-host".to_string(),
             CaptureBackendType::WaylandPipeWire,
-            NistVault::new("test.perigee.server.lifecycle"),
         );
         assert_eq!(daemon.active_session_count().await, 0);
 

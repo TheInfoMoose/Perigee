@@ -469,7 +469,6 @@ pub async fn shutdown_signal() {
 mod tests {
     use super::*;
     use crate::CaptureBackendType;
-    use perigee_common::NistVault;
     use perigee_net::{ClientAuth, QuicClientTransport, QuicTransportConfig};
     use perigee_protocol::{AuthMethod, HandshakeMessage, VideoCodec, WireMessage};
     use tokio::sync::oneshot;
@@ -483,10 +482,9 @@ mod tests {
         .expect("Failed to bind QUIC listener");
         let addr = listener.local_addr().unwrap();
 
-        let daemon = Arc::new(PerigeeHostDaemon::with_vault(
+        let daemon = Arc::new(PerigeeHostDaemon::new(
             "host-test".into(),
             CaptureBackendType::WaylandPipeWire,
-            NistVault::new("test.perigee.server.host"),
         ));
 
         let (tx, rx) = oneshot::channel::<()>();
@@ -561,10 +559,9 @@ mod tests {
         )
         .expect("Failed to bind QUIC listener");
 
-        let daemon = Arc::new(PerigeeHostDaemon::with_vault(
+        let daemon = Arc::new(PerigeeHostDaemon::new(
             "host-close-test".into(),
             CaptureBackendType::WaylandPipeWire,
-            NistVault::new("test.perigee.server.host_close"),
         ));
 
         let endpoint_clone = listener.endpoint.clone();
