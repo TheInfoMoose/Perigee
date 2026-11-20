@@ -31,8 +31,14 @@ tracked_files = [
 ]
 
 [items]
-bugs = []
 features = []
+
+[[items.bugs]]
+id = "BUG-0004"
+title = "Run host services as a non-root user with an explicit config dir"
+status = "pending"
+severity = "medium"
+created_at = "2026-11-20T23:07:03Z"
 
 [[items.tasks]]
 id = "TASK-0027"
@@ -47,3 +53,10 @@ title = "Packaging/CI rename. POST_GATE exit 0 incl. bash -n on packaging script
 status = "closed"
 severity = "medium"
 created_at = "2026-11-19T01:59:36Z"
+
+[[items.tasks]]
+id = "TASK-0067"
+title = "Run workspace tests in release.yml and ship the perigee CLI in installers"
+status = "pending"
+severity = "medium"
+created_at = "2026-11-20T23:07:03Z"

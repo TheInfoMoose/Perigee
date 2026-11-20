@@ -1,0 +1,25 @@
+schema_version = 2
+
+[item]
+id = "TASK-0064"
+type = "task"
+title = "Read-only Phase 4 completeness audit: every goal component in place or tracked in neb; untracked gaps listed for Claude to file"
+status = "closed"
+severity = "medium"
+scope_ref = "docs"
+created_at = "2026-11-20T22:51:41Z"
+updated_at = "2026-11-20T23:07:11Z"
+source_ref = "STEP 4R"
+
+[effort]
+logged_time_minutes = 15
+iteration_count = 1
+last_timer_session = "TASK-0064@2026-11-20T22:51:55Z"
+
+[history]
+recurrence_count = 0
+
+[[history.previous_fixes]]
+date = "2026-11-20"
+commit = "9a7b011"
+summary = "STEP 4R audit validated: 20/24 goal rows Real, 4 Partial; 11 untracked gaps filed pending (FEAT-0001..0003, BUG-0004..0008, TASK-0065..0067)"

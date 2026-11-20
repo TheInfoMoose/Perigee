@@ -31,6 +31,20 @@ status = "closed"
 severity = "low"
 created_at = "2026-11-19T01:59:16Z"
 
+[[items.bugs]]
+id = "BUG-0005"
+title = "Canonicalize known_hosts targets and allow one host key under many targets"
+status = "pending"
+severity = "medium"
+created_at = "2026-11-20T23:07:03Z"
+
+[[items.bugs]]
+id = "BUG-0008"
+title = "Stop logging clipboard payloads at INFO in the client"
+status = "pending"
+severity = "medium"
+created_at = "2026-11-20T23:07:03Z"
+
 [[items.tasks]]
 id = "TASK-0005"
 title = "Real loopback test (TASK-0005). validate-step PASS, POST_GATE exit 0. Diff matches MUTATION_SPEC 1–4: test_real_host_and_client_full_lifecycle drives real bind_host/run_host + connect through frames, input, disconnect, reconnect, host shutdown; mock e2e deleted; perigee-common dev-dep dropped (lock: one dep line); README CLI row, run examples, Phase 3 complete. Claude re-ran loopback 3× (0.11 s, all pass)"

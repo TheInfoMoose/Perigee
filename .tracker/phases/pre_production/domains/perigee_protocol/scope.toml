@@ -20,3 +20,10 @@ title = "Delete AuthRequest, ServerHello, AuthMethod, auth_methods"
 status = "closed"
 severity = "medium"
 created_at = "2026-11-20T11:17:08Z"
+
+[[items.tasks]]
+id = "TASK-0066"
+title = "Remove requires_elevation, legacy-transport log text and HostCredentials"
+status = "pending"
+severity = "low"
+created_at = "2026-11-20T23:07:03Z"

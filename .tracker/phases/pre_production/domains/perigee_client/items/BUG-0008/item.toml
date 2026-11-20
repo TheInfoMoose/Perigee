@@ -1,0 +1,17 @@
+[item]
+id = "BUG-0008"
+type = "bug"
+title = "Stop logging clipboard payloads at INFO in the client"
+status = "pending"
+severity = "medium"
+scope_ref = "perigee_client"
+created_at = "2026-11-20T23:07:03Z"
+updated_at = "2026-11-20T23:07:03Z"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+previous_fixes = []
