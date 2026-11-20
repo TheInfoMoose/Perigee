@@ -1980,7 +1980,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "perigee-channels",
- "perigee-common",
  "perigee-net",
  "perigee-protocol",
  "tokio",

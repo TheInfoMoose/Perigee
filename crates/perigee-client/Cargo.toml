@@ -16,6 +16,3 @@ perigee-protocol = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 wgpu = { workspace = true }
-
-[dev-dependencies]
-perigee-common = { workspace = true }

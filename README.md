@@ -13,6 +13,7 @@
 | Capability | Status | Current Implementation |
 | :--- | :---: | :--- |
 | **Transport** | **Works** | `perigee-net` runs QUIC streams and datagrams over `quinn`, `VpnSocketFactory` binds to a named VPN interface or specific IP and fails closed if missing, and the host accept loop skips failed handshakes and shuts down cleanly on `SIGINT`/`SIGTERM`. |
+| **CLI** | **Works** | `perigee-host` takes `--bind` / `--interface` / `--name`; `perigee connect <host[:port]>` opens a session, prints status and frame counts, and disconnects cleanly; `perigee host` runs an embedded host; a loopback test runs the real host against the real client. |
 | **Auth** | **Planned** | TLS certificate verification currently accepts any peer certificate and `perigee-host` grants a session on an unauthenticated `ClientHello`; pinned peer authentication and pairing via `simply-transfer-link` are planned for Phase 4. |
 | **Capture** | **Stand-in** | Linux (Wayland/X11), Windows, and macOS capturers probe display availability and return constant-filled 64 KiB buffers (stopping the session on capture error); real headless virtual-output and screen-share capture are planned for Phases 5 and 8. |
 | **Encode / Decode** | **Stand-in** | Host video encoders slice raw frame bytes to 1–2 KiB without running a codec, and the client forwards the received payload into DecodedFrameSurface undecoded (crates/perigee-client/src/session.rs:218-224); real video encoding and decoding are planned for Phase 5. |
@@ -43,7 +44,7 @@ cargo test --workspace --all-targets --locked
 
 > **Warning:** Authentication is not implemented yet. `perigee-host` currently accepts any `ClientHello` without verifying peer identity or credentials. Do not expose the host port on an untrusted network.
 
-By default, `perigee-host` binds only to loopback (`127.0.0.1:4433`). Configure binding via environment variables:
+By default, `perigee-host` binds only to loopback (`127.0.0.1:4433`). Configure binding via CLI flags (`--bind`, `--interface`, `--name`) or environment variables (CLI flags override environment variables):
 
 * `PERIGEE_BIND_ADDR`: Socket address and port to bind (default: `127.0.0.1:4433`).
 * `PERIGEE_BIND_INTERFACE`: Optional network/VPN interface name (e.g., `wg0`, `tailscale0`, `utun3`). If set, `perigee-host` binds strictly to that interface and exits with an error if the interface cannot be found or has no matching address.
@@ -52,8 +53,12 @@ By default, `perigee-host` binds only to loopback (`127.0.0.1:4433`). Configure 
 # Run on loopback (default 127.0.0.1:4433)
 cargo run -p perigee-host --locked
 
-# Bind to a specific VPN interface (fails closed if wg0 is absent)
+# Bind to a specific VPN interface via CLI flag or env vars (fails closed if wg0 is absent)
+cargo run -p perigee-host --locked -- --interface wg0
 PERIGEE_BIND_INTERFACE=wg0 PERIGEE_BIND_ADDR=0.0.0.0:4433 cargo run -p perigee-host --locked
+
+# Connect with the CLI client for 10 seconds
+cargo run -p perigee-cli --locked -- connect 127.0.0.1:4433 --for 10
 ```
 
 ---
@@ -63,7 +68,7 @@ PERIGEE_BIND_INTERFACE=wg0 PERIGEE_BIND_ADDR=0.0.0.0:4433 cargo run -p perigee-h
 From the Phase 1 audit and evaluation (`docs/audit/13-evaluation.md`):
 
 1. **Phase 2 — Hygiene & Stand-in Cleanup (Complete)**: Delete stale root files, dead OOB/snapshot/elevation/passthrough code, and unused dependencies; enforce fail-closed VPN socket binding, loopback default bind, resilient accept loop, signal handling, and session reaper; label remaining stand-ins and rename the workspace to Perigee.
-2. **Phase 3 — CLI Client & Session Lifecycle**: Extract connect and profile persistence logic out of `perigee-ui` into `perigee-client` and `perigee-common`; provide `perigee` and `perigee-host` CLI entrypoints, a complete session state machine, clean teardown, and a real host-to-client loopback integration test.
+2. **Phase 3 — CLI Client & Session Lifecycle (Complete)**: Extract connect logic out of `perigee-ui` into `perigee-client`; provide `perigee` and `perigee-host` CLI entrypoints, a complete session state machine, bounded peer data handling, clean teardown, and a real host-to-client loopback integration test.
 3. **ST Track & Phase 4 — Authenticated Transport (`simply-transfer-link`)**: Co-develop `simply-transfer-link` in `ST_Rust_Age` and adopt it in Perigee for SSH control-plane pairing, pinned peer certificates, session tickets, and a single authenticated QUIC endpoint.
 4. **Phase 5 — Linux / COSMIC Media & Input Pipeline**: Implement real headless virtual-output and login-screen (`cosmic-greeter`) capture, video encoding, client decoding, `wgpu` surface presentation, dynamic client-native output scaling, and Wayland input injection on Linux.
 5. **Phase 6 — Clipboard & File Transfer**: Wire bidirectional clipboard synchronization (text, images, files) and verified file transfers over `simply-transfer-link`.
