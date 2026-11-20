@@ -2,11 +2,11 @@
 id = "BUG-0003"
 type = "bug"
 title = "Parse host args before reading environment options"
-status = "open"
+status = "closed"
 severity = "low"
 scope_ref = "perigee_host"
 created_at = "2026-11-19T01:59:16Z"
-updated_at = "2026-11-20T00:38:25Z"
+updated_at = "2026-11-20T03:05:14Z"
 
 [effort]
 logged_time_minutes = 0
@@ -14,4 +14,8 @@ iteration_count = 1
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-20"
+commit = "dd081d4"
+summary = "Fixed by STEP 4B (a528d29, perigee-host) and STEP 4C (perigee CLI): args parsed before env is read"
