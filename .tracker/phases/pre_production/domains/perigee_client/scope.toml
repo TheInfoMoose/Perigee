@@ -27,7 +27,7 @@ created_at = "2026-11-19T01:59:16Z"
 [[items.bugs]]
 id = "BUG-0002"
 title = "Log LossReport size, not the full missing_frames list"
-status = "pending"
+status = "open"
 severity = "low"
 created_at = "2026-11-19T01:59:16Z"
 

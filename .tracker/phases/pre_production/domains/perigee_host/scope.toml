@@ -25,7 +25,7 @@ features = []
 [[items.bugs]]
 id = "BUG-0003"
 title = "Parse host args before reading environment options"
-status = "pending"
+status = "open"
 severity = "low"
 created_at = "2026-11-19T01:59:16Z"
 

@@ -4,19 +4,19 @@ schema_version = 2
 id = "TASK-0007"
 type = "task"
 title = "Baseline report. POST_GATE exit 0. Spot-checked: link failure (no libxkbcommon.so dev symlink on this host), both RustSec advisories, encoder lines. rferram-server tests did not run here"
-status = "closed"
+status = "in_progress"
 severity = "medium"
 scope_ref = "docs"
 created_at = "2026-11-19T01:59:36Z"
-updated_at = "2026-11-19T01:59:36Z"
+updated_at = "2026-11-20T00:36:50Z"
 source_ref = "STEP 1A"
 
 [effort]
 logged_time_minutes = 0
-iteration_count = 1
+iteration_count = 2
 
 [history]
-recurrence_count = 0
+recurrence_count = 1
 
 [[history.previous_fixes]]
 date = "2026-11-19"
