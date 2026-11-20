@@ -8,7 +8,7 @@ created_at = "2026-11-18T20:59:19Z"
 [counters]
 bug = 3
 feature = 0
-task = 37
+task = 38
 
 [[phases.registry]]
 id = "pre_production"
@@ -147,6 +147,21 @@ files = [
 ]
 
 [[components.registry]]
+id = "perigee_cli"
+name = "perigee-cli"
+relative_path = "crates/perigee-cli"
+component_type = "rust_crate"
+tech_stack = ["rust"]
+tags = []
+flags = []
+files = [
+    "crates/perigee-cli/Cargo.toml",
+    "crates/perigee-cli/src/lib.rs",
+    "crates/perigee-cli/src/main.rs",
+    "crates/perigee-cli/tests/loopback.rs",
+]
+
+[[components.registry]]
 id = "perigee_client"
 name = "perigee-client"
 relative_path = "crates/perigee-client"
@@ -158,10 +173,10 @@ files = [
     "crates/perigee-client/Cargo.toml",
     "crates/perigee-client/src/audio.rs",
     "crates/perigee-client/src/bridge.rs",
+    "crates/perigee-client/src/connect.rs",
     "crates/perigee-client/src/lib.rs",
     "crates/perigee-client/src/render.rs",
     "crates/perigee-client/src/session.rs",
-    "crates/perigee-client/tests/e2e_loopback.rs",
 ]
 
 [[components.registry]]

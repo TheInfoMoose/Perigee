@@ -1,0 +1,16 @@
+[scope]
+id = "perigee_cli"
+target = "crates/perigee-cli"
+tech_stack = ["rust"]
+description = "Promoted from component 'perigee-cli' (crates/perigee-cli)"
+bound_component = "perigee_cli"
+tracked_files = [
+    "crates/perigee-cli/Cargo.toml",
+    "crates/perigee-cli/src/lib.rs",
+    "crates/perigee-cli/src/main.rs",
+    "crates/perigee-cli/tests/loopback.rs",
+]
+
+[items]
+bugs = []
+features = []

@@ -84,6 +84,11 @@ id = "simply_transfer_snapshots"
 type = "rust_crate"
 path = "domains/simply_transfer_snapshots"
 
+[[scopes.manifest]]
+id = "perigee_cli"
+type = "rust_crate"
+path = "domains/perigee_cli"
+
 [summary]
 total_items = 0
 completed_items = 0
