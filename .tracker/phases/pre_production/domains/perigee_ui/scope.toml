@@ -29,6 +29,6 @@ created_at = "2026-11-19T01:59:36Z"
 [[items.tasks]]
 id = "TASK-0054"
 title = "UI loads creds via load_client_auth; set_config_dir; UI tests on mTLS"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-20T02:43:56Z"
