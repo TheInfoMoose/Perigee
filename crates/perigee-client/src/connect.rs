@@ -5,7 +5,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use perigee_net::{QuicClientTransport, QuicTransportConfig, VpnInterfaceBinding};
+use perigee_net::{
+    ClientAuth, NODE_KEY_LEN, QuicClientTransport, QuicTransportConfig, VpnInterfaceBinding,
+};
 use perigee_protocol::InputEvent;
 use tokio::sync::{mpsc, watch};
 
@@ -73,6 +75,9 @@ pub struct ConnectOptions {
     pub interface: Option<String>,
     pub handshake_timeout: Duration,
     pub session: SessionConfig,
+    /// Mutual-TLS identity and pinned host key. `None` uses the legacy unauthenticated
+    /// transport (removed in STEP 4O).
+    pub auth: Option<ClientAuth>,
 }
 
 impl ConnectOptions {
@@ -88,6 +93,7 @@ impl ConnectOptions {
             interface: None,
             handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT,
             session,
+            auth: None,
         }
     }
 }
@@ -118,6 +124,11 @@ impl ClientSession {
         self.bridge.peer_cert_sha256()
     }
 
+    /// Returns the host's Ed25519 node key when the session uses mutual TLS.
+    pub fn peer_node_key(&self) -> Option<[u8; NODE_KEY_LEN]> {
+        self.bridge.connection.peer_node_key()
+    }
+
     /// Cleanly disconnects the session: notifies the host, closes the QUIC connection,
     /// marks the session `Terminated`, and drains spawned pipeline and bridge tasks.
     pub async fn disconnect(&self, reason: &str) {
@@ -137,12 +148,14 @@ pub async fn connect(options: ConnectOptions) -> Result<ClientSession> {
         ..Default::default()
     };
 
-    let conn = QuicClientTransport::new(transport_config)
-        .connect(target_addr, "perigee.host")
-        .await
-        .with_context(|| {
-            format!("Failed to establish QUIC connection to '{target_label}' ({target_addr})")
-        })?;
+    let transport = QuicClientTransport::new(transport_config);
+    let conn = match options.auth.clone() {
+        Some(auth) => transport.connect_mtls(target_addr, auth).await,
+        None => transport.connect(target_addr, "perigee.host").await,
+    }
+    .with_context(|| {
+        format!("Failed to establish QUIC connection to '{target_label}' ({target_addr})")
+    })?;
 
     let (bridge, mut state_rx, video_rx, input_tx) =
         QuicSessionBridge::spawn(options.session, Arc::new(conn));
@@ -194,7 +207,7 @@ pub async fn connect(options: ConnectOptions) -> Result<ClientSession> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use perigee_net::QuicServerListener;
+    use perigee_net::{LoopbackPeers, QuicServerListener};
     use perigee_protocol::{HandshakeMessage, WireMessage};
 
     #[test]
@@ -357,6 +370,76 @@ mod tests {
             "expected error to contain 'no handshake response', got: {err_text}"
         );
 
+        let _ = server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_connect_mtls_with_pinned_host_key() {
+        let peers = LoopbackPeers::generate().unwrap();
+        let listener = QuicServerListener::bind_mtls(
+            "127.0.0.1:0".parse().unwrap(),
+            QuicTransportConfig::default(),
+            peers.server_auth(),
+        )
+        .expect("Failed to bind mutual-TLS listener");
+        let server_addr = listener.local_addr().unwrap();
+
+        let server_task = tokio::spawn(async move {
+            let server_conn = listener.accept().await.expect("Server failed to accept");
+            let _hello = server_conn
+                .recv_uni_message()
+                .await
+                .expect("Failed to read ClientHello");
+            server_conn
+                .send_uni_message(&WireMessage::Handshake(HandshakeMessage::AuthResponse {
+                    success: true,
+                    session_token: Some(String::from("tok-mtls-01")),
+                    error_message: None,
+                    requires_elevation: false,
+                }))
+                .await
+                .expect("Failed to send AuthResponse");
+            (listener, server_conn)
+        });
+
+        let mut options = ConnectOptions::new(server_addr.to_string());
+        options.auth = Some(peers.client_auth());
+        let session = connect(options).await.expect("mTLS connect should succeed");
+
+        assert_eq!(session.state(), SessionState::Active);
+        assert_eq!(session.peer_node_key(), Some(peers.host.public_key()));
+
+        session.disconnect("test done").await;
+        let _ = server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_connect_mtls_refuses_wrong_host_key() {
+        let peers = LoopbackPeers::generate().unwrap();
+        let listener = QuicServerListener::bind_mtls(
+            "127.0.0.1:0".parse().unwrap(),
+            QuicTransportConfig::default(),
+            peers.server_auth(),
+        )
+        .expect("Failed to bind mutual-TLS listener");
+        let server_addr = listener.local_addr().unwrap();
+        let server_task = tokio::spawn(async move {
+            let _ = tokio::time::timeout(Duration::from_secs(2), listener.accept()).await;
+            listener
+        });
+
+        let mut options = ConnectOptions::new(server_addr.to_string());
+        options.auth = Some(ClientAuth {
+            identity: peers.client.clone(),
+            host_key: [0u8; 32],
+        });
+        let Err(err) = connect(options).await else {
+            panic!("connect must refuse a host whose key is not pinned");
+        };
+        assert!(
+            format!("{err:#}").contains("mutual-TLS"),
+            "unexpected error: {err:#}"
+        );
         let _ = server_task.await.unwrap();
     }
 }

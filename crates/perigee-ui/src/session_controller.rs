@@ -341,6 +341,7 @@ impl UiSessionController {
             interface,
             handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT,
             session: session_config,
+            auth: None,
         };
 
         let mut client = match perigee_client::connect(connect_options).await {
