@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0059"
 type = "task"
 title = "Host on mTLS: config_dir, --config-dir, TrustFileAuthorizer; loopback test trusts its client"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "perigee_host"
 created_at = "2026-11-20T11:17:08Z"
-updated_at = "2026-11-20T11:17:08Z"
+updated_at = "2026-11-20T11:49:07Z"
 source_ref = "STEP 4I"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 24
 iteration_count = 1
+last_timer_session = "TASK-0059@2026-11-20T11:25:01Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-20"
+commit = "9c7e682"
+summary = "bind_host binds mTLS with identity.key and TrustFileAuthorizer (trusted_clients re-read per handshake); --config-dir; loopback test trusts its client"
