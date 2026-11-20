@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::Result;
 use perigee_cli::{CliCommand, ConnectArgs, USAGE, resolve_cli_command};
 use perigee_client::{ConnectOptions, SessionState, connect};
-use perigee_host::{HOST_USAGE, HostCommand, bind_host, run_host, shutdown_signal};
+use perigee_host::{HOST_USAGE, HostCommand, bind_host, run_host, run_host_admin, shutdown_signal};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -31,6 +31,10 @@ async fn main() -> Result<()> {
         }
         CliCommand::Version | CliCommand::Host(HostCommand::Version) => {
             println!("perigee {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        CliCommand::Host(HostCommand::Admin(admin)) => {
+            println!("{}", run_host_admin(&admin)?);
             Ok(())
         }
         CliCommand::Host(HostCommand::Run(opts)) => {

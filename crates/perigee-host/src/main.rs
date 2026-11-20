@@ -14,7 +14,8 @@
 
 use anyhow::Result;
 use perigee_host::{
-    HOST_USAGE, HostCommand, bind_host, resolve_host_command, run_host, shutdown_signal,
+    HOST_USAGE, HostCommand, bind_host, resolve_host_command, run_host, run_host_admin,
+    shutdown_signal,
 };
 
 #[tokio::main]
@@ -34,6 +35,10 @@ async fn main() -> Result<()> {
         }
         HostCommand::Version => {
             println!("perigee-host {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        HostCommand::Admin(admin) => {
+            println!("{}", run_host_admin(&admin)?);
             Ok(())
         }
         HostCommand::Run(opts) => {

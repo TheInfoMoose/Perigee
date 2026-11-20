@@ -5,7 +5,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use perigee_net::{
     IDENTITY_FILE_NAME, NODE_KEY_LEN, NodeIdentity, PeerAuthorizer, QuicServerListener,
     QuicTransportConfig, ServerAuth, TRUSTED_CLIENTS_FILE_NAME, TrustedKeys, VpnInterfaceBinding,
-    default_config_dir,
+    default_config_dir, node_key_from_hex, node_key_to_hex,
 };
 use std::future::Future;
 use std::net::SocketAddr;
@@ -23,6 +23,16 @@ pub const DEFAULT_NODE_NAME: &str = "perigee-host-node";
 /// Usage text for `perigee-host --help`.
 pub const HOST_USAGE: &str = "\
 Usage: perigee-host [run] [OPTIONS]
+       perigee-host identity [--config-dir <DIR>]
+       perigee-host trust add <KEY> <LABEL> [--config-dir <DIR>]
+       perigee-host trust list [--config-dir <DIR>]
+       perigee-host trust remove <KEY> [--config-dir <DIR>]
+
+Key management:
+  identity              Print this host's node key (created on first use)
+  trust add             Allow the client whose node key is KEY (64 hex chars) to connect
+  trust list            List trusted client keys
+  trust remove          Stop trusting KEY
 
 Options:
   --bind <ADDR>         UDP socket bind address (default: 127.0.0.1:4433, loopback-only)
@@ -104,12 +114,36 @@ impl HostOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostCommand {
     Run(HostOptions),
+    Admin(HostAdmin),
     Help,
     Version,
 }
 
+/// A `perigee-host` key-management subcommand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostAdmin {
+    /// Print this host's node key.
+    Identity { config_dir: Option<PathBuf> },
+    /// Trust a client node key under a label.
+    TrustAdd {
+        config_dir: Option<PathBuf>,
+        key: [u8; NODE_KEY_LEN],
+        label: String,
+    },
+    /// List trusted client node keys.
+    TrustList { config_dir: Option<PathBuf> },
+    /// Stop trusting a client node key.
+    TrustRemove {
+        config_dir: Option<PathBuf>,
+        key: [u8; NODE_KEY_LEN],
+    },
+}
+
 /// Parses `perigee-host` CLI arguments (`args` excludes the program name) on top of `base`.
 pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand> {
+    if matches!(args.first().map(String::as_str), Some("identity" | "trust")) {
+        return parse_host_admin(args).map(HostCommand::Admin);
+    }
     let mut opts = base;
     let mut slice = args;
     if slice.first().map(String::as_str) == Some("run") {
@@ -165,6 +199,93 @@ pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand
     }
 
     Ok(HostCommand::Run(opts))
+}
+
+fn parse_host_admin(args: &[String]) -> Result<HostAdmin> {
+    let mut config_dir = None;
+    let mut positional: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--config-dir" => {
+                let val = args
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow!("--config-dir needs a value"))?;
+                if val.is_empty() {
+                    bail!("--config-dir needs a value");
+                }
+                config_dir = Some(PathBuf::from(val));
+                i += 2;
+            }
+            arg if arg.starts_with('-') => bail!("unknown argument '{arg}'; run with --help"),
+            arg => {
+                positional.push(arg);
+                i += 1;
+            }
+        }
+    }
+    match positional.as_slice() {
+        ["identity"] => Ok(HostAdmin::Identity { config_dir }),
+        ["trust", "list"] => Ok(HostAdmin::TrustList { config_dir }),
+        ["trust", "add", key, label] => Ok(HostAdmin::TrustAdd {
+            config_dir,
+            key: node_key_from_hex(key)?,
+            label: (*label).to_string(),
+        }),
+        ["trust", "remove", key] => Ok(HostAdmin::TrustRemove {
+            config_dir,
+            key: node_key_from_hex(key)?,
+        }),
+        _ => bail!(
+            "usage: perigee-host identity | trust add <KEY> <LABEL> | trust list | trust remove <KEY>"
+        ),
+    }
+}
+
+/// Runs a key-management subcommand and returns the text to print.
+pub fn run_host_admin(admin: &HostAdmin) -> Result<String> {
+    let dir = |config_dir: &Option<PathBuf>| {
+        host_config_dir(&HostOptions {
+            config_dir: config_dir.clone(),
+            ..HostOptions::default()
+        })
+    };
+    match admin {
+        HostAdmin::Identity { config_dir } => {
+            let identity =
+                NodeIdentity::load_or_create(&dir(config_dir)?.join(IDENTITY_FILE_NAME))?;
+            Ok(identity.public_key_hex())
+        }
+        HostAdmin::TrustAdd {
+            config_dir,
+            key,
+            label,
+        } => {
+            let trusted = TrustedKeys::load(dir(config_dir)?.join(TRUSTED_CLIENTS_FILE_NAME))?;
+            trusted.add(*key, label)?;
+            Ok(format!("trusted {} as {label}", node_key_to_hex(key)))
+        }
+        HostAdmin::TrustList { config_dir } => {
+            let trusted = TrustedKeys::load(dir(config_dir)?.join(TRUSTED_CLIENTS_FILE_NAME))?;
+            let entries = trusted.entries();
+            if entries.is_empty() {
+                return Ok("(no trusted clients)".to_string());
+            }
+            Ok(entries
+                .iter()
+                .map(|entry| format!("{} {}", node_key_to_hex(&entry.key), entry.label))
+                .collect::<Vec<_>>()
+                .join("\n"))
+        }
+        HostAdmin::TrustRemove { config_dir, key } => {
+            let trusted = TrustedKeys::load(dir(config_dir)?.join(TRUSTED_CLIENTS_FILE_NAME))?;
+            if trusted.remove(key)? {
+                Ok(format!("removed {}", node_key_to_hex(key)))
+            } else {
+                bail!("{} is not a trusted client", node_key_to_hex(key))
+            }
+        }
+    }
 }
 
 /// Resolves the `perigee-host` command line. `--help` and `--version` never read the
@@ -615,6 +736,94 @@ mod tests {
             .expect("server task timed out")
             .expect("server task panicked");
         assert_eq!(seen, Some(Some(client.public_key())));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_parse_host_admin() {
+        let base = HostOptions::default;
+        let key_hex = "ab".repeat(NODE_KEY_LEN);
+        let args = |items: &[&str]| items.iter().map(|x| (*x).to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            parse_host_args(&args(&["identity"]), base()).unwrap(),
+            HostCommand::Admin(HostAdmin::Identity { config_dir: None })
+        );
+        assert_eq!(
+            parse_host_args(
+                &args(&[
+                    "trust",
+                    "add",
+                    &key_hex,
+                    "laptop",
+                    "--config-dir",
+                    "/tmp/perigee-test"
+                ]),
+                base()
+            )
+            .unwrap(),
+            HostCommand::Admin(HostAdmin::TrustAdd {
+                config_dir: Some(PathBuf::from("/tmp/perigee-test")),
+                key: [0xab; NODE_KEY_LEN],
+                label: "laptop".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_host_args(&args(&["trust", "list"]), base()).unwrap(),
+            HostCommand::Admin(HostAdmin::TrustList { config_dir: None })
+        );
+        assert_eq!(
+            parse_host_args(&args(&["trust", "remove", &key_hex]), base()).unwrap(),
+            HostCommand::Admin(HostAdmin::TrustRemove {
+                config_dir: None,
+                key: [0xab; NODE_KEY_LEN],
+            })
+        );
+        assert!(parse_host_args(&args(&["trust", "add", "nothex", "laptop"]), base()).is_err());
+        assert!(parse_host_args(&args(&["trust"]), base()).is_err());
+    }
+
+    #[test]
+    fn test_run_host_admin_round_trip() {
+        let dir = std::env::temp_dir().join(format!("perigee-host-admin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config_dir = Some(dir.clone());
+
+        let printed = run_host_admin(&HostAdmin::Identity {
+            config_dir: config_dir.clone(),
+        })
+        .unwrap();
+        let identity = NodeIdentity::load_or_create(&dir.join(IDENTITY_FILE_NAME)).unwrap();
+        assert_eq!(printed, identity.public_key_hex());
+
+        let key = [0x55; NODE_KEY_LEN];
+        run_host_admin(&HostAdmin::TrustAdd {
+            config_dir: config_dir.clone(),
+            key,
+            label: "laptop".to_string(),
+        })
+        .unwrap();
+        let listed = run_host_admin(&HostAdmin::TrustList {
+            config_dir: config_dir.clone(),
+        })
+        .unwrap();
+        assert_eq!(listed, format!("{} laptop", node_key_to_hex(&key)));
+
+        run_host_admin(&HostAdmin::TrustRemove {
+            config_dir: config_dir.clone(),
+            key,
+        })
+        .unwrap();
+        assert!(
+            run_host_admin(&HostAdmin::TrustRemove {
+                config_dir: config_dir.clone(),
+                key,
+            })
+            .is_err()
+        );
+        assert_eq!(
+            run_host_admin(&HostAdmin::TrustList { config_dir }).unwrap(),
+            "(no trusted clients)"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
