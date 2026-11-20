@@ -12,19 +12,20 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use cosmic::app::Task;
 use perigee_channels::VirtualChannelManager;
 use perigee_client::{
     ClientSession, ConnectOptions, DEFAULT_HANDSHAKE_TIMEOUT, DecodedFrameSurface,
-    QuicSessionBridge, SessionConfig, SessionState, WgpuRenderPipeline,
+    QuicSessionBridge, SessionConfig, SessionState, WgpuRenderPipeline, load_client_auth,
 };
 use perigee_common::ConnectionProfile;
-use perigee_net::VpnInterfaceBinding;
+use perigee_net::{VpnInterfaceBinding, default_config_dir};
 use perigee_protocol::{
     ControlMessage, HandshakeMessage, InputEvent, PixelFormat, VideoCodec, VirtualChannelMessage,
     WireMessage, decode_length_prefixed,
@@ -224,6 +225,7 @@ pub struct UiSessionController {
     sessions: Arc<StdMutex<HashMap<String, Arc<ActiveUiSession>>>>,
     telemetry: Arc<StdMutex<HashMap<String, SessionTelemetrySnapshot>>>,
     runtime_holder: Arc<SessionRuntimeHolder>,
+    config_dir: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for UiSessionController {
@@ -248,6 +250,7 @@ impl UiSessionController {
             sessions: Arc::new(StdMutex::new(HashMap::new())),
             telemetry: Arc::new(StdMutex::new(HashMap::new())),
             runtime_holder: Arc::new(SessionRuntimeHolder::new()),
+            config_dir: None,
         }
     }
 
@@ -264,6 +267,19 @@ impl UiSessionController {
             async move { controller.connect_profile(profile, vpn_binding).await },
             SessionConnectOutcome::into_message,
         )
+    }
+
+    /// Uses `dir` (holding `identity.key` and `known_hosts`) instead of the default Perigee
+    /// config directory.
+    pub fn set_config_dir(&mut self, dir: impl Into<PathBuf>) {
+        self.config_dir = Some(dir.into());
+    }
+
+    fn client_config_dir(&self) -> Result<PathBuf> {
+        self.config_dir
+            .clone()
+            .or_else(default_config_dir)
+            .ok_or_else(|| anyhow!("no Perigee config directory: set PERIGEE_CONFIG_DIR"))
     }
 
     /// Connects to `profile.host_address` via [`perigee_client::connect`] bound to `vpn_binding`,
@@ -336,12 +352,24 @@ impl UiSessionController {
             preferred_video_codec: VideoCodec::AV1,
         };
 
+        let auth = match self
+            .client_config_dir()
+            .and_then(|dir| load_client_auth(&dir, &profile.host_address, None))
+        {
+            Ok(auth) => auth,
+            Err(err) => {
+                let status = format!("Failed: {err:#}");
+                self.record_failed_status(&profile_id, &status);
+                return SessionConnectOutcome::failed(profile_id, status);
+            }
+        };
+
         let connect_options = ConnectOptions {
             target: profile.host_address.clone(),
             interface,
             handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT,
             session: session_config,
-            auth: None,
+            auth: Some(auth),
         };
 
         let mut client = match perigee_client::connect(connect_options).await {
@@ -798,7 +826,10 @@ mod tests {
 
     use cosmic::app::Core;
     use perigee_channels::ClipboardContent;
-    use perigee_net::{QuicServerListener, QuicTransportConfig};
+    use perigee_net::{
+        AllowList, IDENTITY_FILE_NAME, KNOWN_HOSTS_FILE_NAME, NodeIdentity, QuicServerListener,
+        QuicTransportConfig, ServerAuth, TrustedKeys,
+    };
     use perigee_protocol::{
         ClipboardPayload, ElementState, MouseButtonCode, VideoFrameMessage, encode_length_prefixed,
     };
@@ -859,12 +890,26 @@ mod tests {
     #[tokio::test]
     async fn test_connect_session_end_to_end_loopback() {
         // 1. Bind a local QUIC server listener on 127.0.0.1:0
-        let listener = QuicServerListener::bind(
+        let config_dir =
+            std::env::temp_dir().join(format!("perigee-ui-loopback-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&config_dir);
+        let client_identity = NodeIdentity::load_or_create(&config_dir.join(IDENTITY_FILE_NAME))
+            .expect("client identity");
+        let host_identity = Arc::new(NodeIdentity::generate().expect("host identity"));
+        let listener = QuicServerListener::bind_mtls(
             "127.0.0.1:0".parse().unwrap(),
             QuicTransportConfig::default(),
+            ServerAuth {
+                identity: host_identity.clone(),
+                authorizer: Arc::new(AllowList::new([client_identity.public_key()])),
+            },
         )
         .expect("Failed to bind QUIC loopback server listener");
         let server_addr = listener.local_addr().expect("Failed to query server_addr");
+        TrustedKeys::load(config_dir.join(KNOWN_HOSTS_FILE_NAME))
+            .expect("load known_hosts")
+            .add(host_identity.public_key(), &server_addr.to_string())
+            .expect("pin the loopback host key");
         let expected_cert_sha256 = listener.server_cert_sha256;
 
         // 2. Spawn the simulated host server handling handshake, bandwidth telemetry, video stream, and bi-stream virtual channels
@@ -974,6 +1019,7 @@ mod tests {
         });
 
         // 4. Trigger Message::ConnectSession and execute the returned Task::perform future
+        app.session_controller.set_config_dir(config_dir.clone());
         let connect_task = app.update(Message::ConnectSession(profile_id.clone()));
         assert_eq!(
             app.session_status(&profile_id),
@@ -1097,5 +1143,31 @@ mod tests {
         let _ = app.update(Message::DeleteConnection(profile_id.clone()));
         assert!(!active_session.bridge.is_active());
         assert!(app.session_controller.session_for(&profile_id).is_none());
+        let _ = std::fs::remove_dir_all(&config_dir);
+    }
+
+    #[tokio::test]
+    async fn test_connect_without_pinned_host_key_fails() {
+        let config_dir =
+            std::env::temp_dir().join(format!("perigee-ui-nopin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&config_dir);
+        let mut controller = UiSessionController::new();
+        controller.set_config_dir(config_dir.clone());
+        let profile = ConnectionProfile {
+            id: String::from("prof-no-pin"),
+            friendly_name: String::from("Unpinned Host"),
+            host_address: String::from("192.0.2.10:4433"),
+            group_name: String::from("Group 1"),
+            ..Default::default()
+        };
+        let outcome = controller
+            .connect_profile(profile, VpnAdapterBinding::Tailscale)
+            .await;
+        assert!(
+            outcome.status.contains("no pinned host key"),
+            "unexpected status: {}",
+            outcome.status
+        );
+        let _ = std::fs::remove_dir_all(&config_dir);
     }
 }
