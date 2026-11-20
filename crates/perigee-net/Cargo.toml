@@ -15,10 +15,12 @@ quinn = { workspace = true }
 rcgen = { workspace = true }
 perigee-protocol = { workspace = true }
 rustls = { workspace = true }
+rustls-webpki = { workspace = true }
 sha2 = { workspace = true }
 socket2 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
 perigee-common = { workspace = true }

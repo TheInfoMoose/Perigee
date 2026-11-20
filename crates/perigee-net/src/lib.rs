@@ -6,11 +6,13 @@
 //! channels, TLS 1.3 peer certificate SHA-256 channel binding, and live network metrics.
 
 pub mod endpoint;
+pub mod identity;
 pub mod manager;
 pub mod metrics;
 pub mod socket;
 
 pub use endpoint::*;
+pub use identity::*;
 pub use manager::*;
 pub use metrics::*;
 pub use socket::*;
