@@ -1,12 +1,14 @@
 //! Frontend-agnostic connect flow: resolve the target, open the QUIC connection, run the session handshake, and hand back a live ClientSession.
 
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use perigee_net::{
-    ClientAuth, NODE_KEY_LEN, QuicClientTransport, QuicTransportConfig, VpnInterfaceBinding,
+    ClientAuth, IDENTITY_FILE_NAME, KNOWN_HOSTS_FILE_NAME, NODE_KEY_LEN, NodeIdentity,
+    QuicClientTransport, QuicTransportConfig, TrustedKeys, VpnInterfaceBinding,
 };
 use perigee_protocol::InputEvent;
 use tokio::sync::{mpsc, watch};
@@ -66,6 +68,31 @@ pub fn parse_interface_binding(spec: Option<&str>) -> VpnInterfaceBinding {
     } else {
         VpnInterfaceBinding::InterfaceName(trimmed.to_string())
     }
+}
+
+/// Mutual-TLS credentials from a Perigee config directory: this machine's node identity
+/// (`identity.key`, created on first use) and the host key for `target`, which is
+/// `host_key_override` when given, else the pin saved in `known_hosts` under the label `target`.
+pub fn load_client_auth(
+    config_dir: &Path,
+    target: &str,
+    host_key_override: Option<[u8; NODE_KEY_LEN]>,
+) -> Result<ClientAuth> {
+    let identity = Arc::new(NodeIdentity::load_or_create(
+        &config_dir.join(IDENTITY_FILE_NAME),
+    )?);
+    let host_key = match host_key_override {
+        Some(key) => key,
+        None => TrustedKeys::load(config_dir.join(KNOWN_HOSTS_FILE_NAME))?
+            .find_by_label(target)
+            .map(|entry| entry.key)
+            .ok_or_else(|| {
+                anyhow!(
+                    "no pinned host key for '{target}': run `perigee trust add {target} <KEY>` with the key `perigee-host identity` prints, or pass --host-key"
+                )
+            })?,
+    };
+    Ok(ClientAuth { identity, host_key })
 }
 
 /// Options controlling how [`connect`] establishes a [`ClientSession`].

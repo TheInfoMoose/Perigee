@@ -6,7 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
-use perigee_cli::{CliCommand, ConnectArgs, USAGE, resolve_cli_command};
+use perigee_cli::{
+    CliCommand, ConnectArgs, USAGE, client_auth_for, resolve_cli_command, run_client_admin,
+};
 use perigee_client::{ConnectOptions, SessionState, connect};
 use perigee_host::{HOST_USAGE, HostCommand, bind_host, run_host, run_host_admin, shutdown_signal};
 
@@ -31,6 +33,10 @@ async fn main() -> Result<()> {
         }
         CliCommand::Version | CliCommand::Host(HostCommand::Version) => {
             println!("perigee {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        CliCommand::Admin(admin) => {
+            println!("{}", run_client_admin(&admin)?);
             Ok(())
         }
         CliCommand::Host(HostCommand::Admin(admin)) => {
@@ -62,7 +68,9 @@ fn format_cert_sha256(digest: Option<[u8; 32]>) -> String {
 }
 
 async fn run_connect(args: ConnectArgs) -> Result<()> {
+    let auth = client_auth_for(&args)?;
     let mut opts = ConnectOptions::new(args.target.clone());
+    opts.auth = Some(auth);
     opts.interface = args.interface;
     opts.handshake_timeout = args.handshake_timeout;
 
