@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0063"
 type = "task"
 title = "ConnectOptions::new(target, auth); auth required"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "perigee_client"
 created_at = "2026-11-20T11:17:08Z"
-updated_at = "2026-11-20T11:17:08Z"
+updated_at = "2026-11-20T19:24:15Z"
 source_ref = "STEP 4O"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 4
 iteration_count = 1
+last_timer_session = "TASK-0063@2026-11-20T19:19:52Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-20"
+commit = "5785ca0"
+summary = "STEP 4O validated and committed"

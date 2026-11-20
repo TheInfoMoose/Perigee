@@ -69,6 +69,6 @@ created_at = "2026-11-20T02:43:56Z"
 [[items.tasks]]
 id = "TASK-0063"
 title = "ConnectOptions::new(target, auth); auth required"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-20T11:17:08Z"
