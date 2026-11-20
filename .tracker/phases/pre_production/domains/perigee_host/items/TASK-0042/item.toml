@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0042"
 type = "task"
 title = "BUG-0003 host: resolve_host_command; --help never reads env"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "perigee_host"
 created_at = "2026-11-20T02:43:56Z"
-updated_at = "2026-11-20T02:43:56Z"
+updated_at = "2026-11-20T02:58:05Z"
 source_ref = "STEP 4B"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 4
 iteration_count = 1
+last_timer_session = "TASK-0042@2026-11-20T02:53:56Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-20"
+commit = "a528d29"
+summary = "resolve_host_command parses args first; --help/--version never read PERIGEE_BIND_*"
