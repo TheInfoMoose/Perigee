@@ -1,24 +1,55 @@
 //! End-to-end loopback integration test between the real `perigee-host` daemon
 //! and the real `perigee-client` connect API (`CLI-06`, `REPO-05`).
 
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use perigee_client::{ConnectOptions, SessionState, connect};
 use perigee_host::{HostOptions, bind_host, run_host};
+use perigee_net::{
+    ClientAuth, IDENTITY_FILE_NAME, NODE_KEY_LEN, NodeIdentity, TRUSTED_CLIENTS_FILE_NAME,
+    TrustedKeys,
+};
 use perigee_protocol::InputEvent;
 use tokio::sync::oneshot;
+
+fn trusted_options(
+    addr: &SocketAddr,
+    client: &Arc<NodeIdentity>,
+    host_key: [u8; NODE_KEY_LEN],
+) -> ConnectOptions {
+    let mut options = ConnectOptions::new(addr.to_string());
+    options.auth = Some(ClientAuth {
+        identity: client.clone(),
+        host_key,
+    });
+    options
+}
 
 #[tokio::test]
 async fn test_real_host_and_client_full_lifecycle() {
     // a. Bind real host on loopback ephemeral port and spawn run_host with oneshot shutdown.
+    let config_dir = std::env::temp_dir().join(format!("perigee-loopback-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&config_dir);
+    let client = Arc::new(NodeIdentity::generate().expect("client identity"));
+    TrustedKeys::load(config_dir.join(TRUSTED_CLIENTS_FILE_NAME))
+        .expect("load trust file")
+        .add(client.public_key(), "loopback-client")
+        .expect("trust the loopback client");
+
     let host_opts = HostOptions {
         bind_addr: "127.0.0.1:0".parse().expect("valid loopback addr"),
+        config_dir: Some(config_dir.clone()),
         ..Default::default()
     };
     let (daemon, listener) = bind_host(&host_opts).expect("bind_host should succeed");
     let addr = listener
         .local_addr()
         .expect("listener.local_addr should succeed");
+    let host_key = NodeIdentity::load_or_create(&config_dir.join(IDENTITY_FILE_NAME))
+        .expect("host identity")
+        .public_key();
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let daemon_for_host = daemon.clone();
@@ -32,7 +63,7 @@ async fn test_real_host_and_client_full_lifecycle() {
     // b. Connect first client session and confirm Active state and daemon session count == 1.
     let mut session = tokio::time::timeout(
         Duration::from_secs(5),
-        connect(ConnectOptions::new(addr.to_string())),
+        connect(trusted_options(&addr, &client, host_key)),
     )
     .await
     .expect("connect timed out")
@@ -90,7 +121,7 @@ async fn test_real_host_and_client_full_lifecycle() {
     // f. Reconnect a second session to the same host address -> Active, count back to 1.
     let mut session2 = tokio::time::timeout(
         Duration::from_secs(5),
-        connect(ConnectOptions::new(addr.to_string())),
+        connect(trusted_options(&addr, &client, host_key)),
     )
     .await
     .expect("second connect timed out")
@@ -134,4 +165,6 @@ async fn test_real_host_and_client_full_lifecycle() {
     tokio::time::timeout(Duration::from_secs(5), session2.disconnect("cleanup"))
         .await
         .expect("session2 cleanup timed out");
+    assert_eq!(session2.peer_node_key(), Some(host_key));
+    let _ = std::fs::remove_dir_all(&config_dir);
 }

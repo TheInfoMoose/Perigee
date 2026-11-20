@@ -2,9 +2,14 @@
 
 use crate::PerigeeHostDaemon;
 use anyhow::{Context, Result, anyhow, bail};
-use perigee_net::{QuicServerListener, QuicTransportConfig, VpnInterfaceBinding};
+use perigee_net::{
+    IDENTITY_FILE_NAME, NODE_KEY_LEN, NodeIdentity, PeerAuthorizer, QuicServerListener,
+    QuicTransportConfig, ServerAuth, TRUSTED_CLIENTS_FILE_NAME, TrustedKeys, VpnInterfaceBinding,
+    default_config_dir,
+};
 use std::future::Future;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -23,13 +28,18 @@ Options:
   --bind <ADDR>         UDP socket bind address (default: 127.0.0.1:4433, loopback-only)
   --interface <NAME>    Bind exclusively to network/VPN interface NAME (fails closed if missing)
   --name <NODE>         Host node identifier (default: perigee-host-node)
+  --config-dir <DIR>    Directory holding identity.key and trusted_clients
+                        (default: PERIGEE_CONFIG_DIR, else ~/.config/perigee)
   -h, --help            Print this help text and exit
   -V, --version         Print version information and exit
 
 Environment variables (overridden by CLI flags):
   PERIGEE_BIND_ADDR       UDP socket bind address (default: 127.0.0.1:4433)
   PERIGEE_BIND_INTERFACE  Network/VPN interface name to bind exclusively (fails closed)
-  PERIGEE_SMOKE_TEST      If set, exit cleanly right after binding the QUIC listener";
+  PERIGEE_CONFIG_DIR      Config directory (identity.key, trusted_clients)
+  PERIGEE_SMOKE_TEST      If set, exit cleanly right after binding the QUIC listener
+
+Only clients whose node key is listed in trusted_clients can connect.";
 
 /// Host daemon configuration resolved from defaults, environment variables, and CLI flags.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +47,9 @@ pub struct HostOptions {
     pub bind_addr: SocketAddr,
     pub interface: Option<String>,
     pub node_name: String,
+    /// Directory holding `identity.key` and `trusted_clients`; `None` means
+    /// [`default_config_dir`].
+    pub config_dir: Option<PathBuf>,
 }
 
 impl Default for HostOptions {
@@ -47,6 +60,7 @@ impl Default for HostOptions {
                 .expect("DEFAULT_BIND_ADDR is a valid SocketAddr"),
             interface: None,
             node_name: DEFAULT_NODE_NAME.to_string(),
+            config_dir: None,
         }
     }
 }
@@ -136,6 +150,16 @@ pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand
                 opts.node_name = val.clone();
                 i += 2;
             }
+            "--config-dir" => {
+                let val = slice
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow!("--config-dir needs a value"))?;
+                if val.is_empty() {
+                    bail!("--config-dir needs a value");
+                }
+                opts.config_dir = Some(PathBuf::from(val));
+                i += 2;
+            }
             other => bail!("unknown argument '{other}'; run with --help"),
         }
     }
@@ -156,16 +180,70 @@ pub fn resolve_host_command(
     }
 }
 
-/// Auto-detects the capture backend, constructs a [`PerigeeHostDaemon`], and binds a
-/// [`QuicServerListener`] according to `options`.
+/// Trusts the client keys listed in a trust file. The file is re-read on every handshake, so
+/// `perigee-host trust add` takes effect without a restart. A missing file trusts nobody; an
+/// unreadable or malformed file trusts nobody and logs a warning.
+#[derive(Debug)]
+pub struct TrustFileAuthorizer {
+    path: PathBuf,
+}
+
+impl TrustFileAuthorizer {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+}
+
+impl PeerAuthorizer for TrustFileAuthorizer {
+    fn is_authorized(&self, node_key: &[u8; NODE_KEY_LEN]) -> bool {
+        match TrustedKeys::load(self.path.clone()) {
+            Ok(trusted) => trusted.contains(node_key),
+            Err(e) => {
+                warn!(error = %format!("{e:#}"), "Refusing client: trust file is unreadable");
+                false
+            }
+        }
+    }
+}
+
+/// The host's config directory: `options.config_dir`, else [`default_config_dir`].
+pub fn host_config_dir(options: &HostOptions) -> Result<PathBuf> {
+    options
+        .config_dir
+        .clone()
+        .or_else(default_config_dir)
+        .ok_or_else(|| {
+            anyhow!("no Perigee config directory: set PERIGEE_CONFIG_DIR or pass --config-dir")
+        })
+}
+
+/// Loads (or creates) the host's node identity, auto-detects the capture backend, constructs a
+/// [`PerigeeHostDaemon`], and binds a mutual-TLS [`QuicServerListener`] that admits only the
+/// clients listed in `<config dir>/trusted_clients`.
 pub fn bind_host(options: &HostOptions) -> Result<(Arc<PerigeeHostDaemon>, QuicServerListener)> {
+    let config_dir = host_config_dir(options)?;
+    let identity = Arc::new(NodeIdentity::load_or_create(
+        &config_dir.join(IDENTITY_FILE_NAME),
+    )?);
+    let authorizer = Arc::new(TrustFileAuthorizer::new(
+        config_dir.join(TRUSTED_CLIENTS_FILE_NAME),
+    ));
     let backend = PerigeeHostDaemon::auto_detect_backend();
     let daemon = Arc::new(PerigeeHostDaemon::new(options.node_name.clone(), backend));
-    let listener = QuicServerListener::bind(options.bind_addr, options.transport_config())?;
+    let listener = QuicServerListener::bind_mtls(
+        options.bind_addr,
+        options.transport_config(),
+        ServerAuth {
+            identity: identity.clone(),
+            authorizer,
+        },
+    )?;
     info!(
         local_addr = ?listener.local_addr()?,
         backend = ?daemon.backend,
-        "Perigee Host Daemon listening for incoming QUIC connections"
+        node_key = %identity.public_key_hex(),
+        config_dir = %config_dir.display(),
+        "Perigee Host Daemon listening for mutual-TLS QUIC connections"
     );
     Ok((daemon, listener))
 }
@@ -271,7 +349,7 @@ mod tests {
     use super::*;
     use crate::CaptureBackendType;
     use perigee_common::NistVault;
-    use perigee_net::{QuicClientTransport, QuicTransportConfig};
+    use perigee_net::{ClientAuth, QuicClientTransport, QuicTransportConfig};
     use perigee_protocol::{AuthMethod, HandshakeMessage, VideoCodec, WireMessage};
     use tokio::sync::oneshot;
 
@@ -444,6 +522,7 @@ mod tests {
                 bind_addr: "192.0.2.10:5000".parse().unwrap(),
                 interface: Some("wg0".to_string()),
                 node_name: "lab".to_string(),
+                config_dir: None,
             })
         );
 
@@ -463,6 +542,80 @@ mod tests {
             unknown_err.to_string().contains("unknown argument"),
             "Expected error containing 'unknown argument', got: {unknown_err}"
         );
+    }
+
+    #[test]
+    fn test_parse_config_dir_flag() {
+        let args = ["--config-dir".to_string(), "/tmp/perigee-test".to_string()];
+        assert_eq!(
+            parse_host_args(&args, HostOptions::default()).unwrap(),
+            HostCommand::Run(HostOptions {
+                config_dir: Some(PathBuf::from("/tmp/perigee-test")),
+                ..HostOptions::default()
+            })
+        );
+        assert!(parse_host_args(&["--config-dir".to_string()], HostOptions::default()).is_err());
+    }
+
+    #[test]
+    fn test_trust_file_authorizer_rereads_file() {
+        let dir = std::env::temp_dir().join(format!("perigee-host-authz-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join(TRUSTED_CLIENTS_FILE_NAME);
+        let authorizer = TrustFileAuthorizer::new(path.clone());
+        let key = [0x44; NODE_KEY_LEN];
+        assert!(!authorizer.is_authorized(&key));
+        TrustedKeys::load(path.clone())
+            .unwrap()
+            .add(key, "laptop")
+            .unwrap();
+        assert!(authorizer.is_authorized(&key));
+        std::fs::write(&path, "not a trust line\n").unwrap();
+        assert!(!authorizer.is_authorized(&key));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_bind_host_admits_client_from_trust_file() {
+        let dir = std::env::temp_dir().join(format!("perigee-host-bind-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let options = HostOptions {
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            config_dir: Some(dir.clone()),
+            ..HostOptions::default()
+        };
+        let (_daemon, listener) = bind_host(&options).expect("bind_host should succeed");
+        let addr = listener.local_addr().unwrap();
+        let host_key = NodeIdentity::load_or_create(&dir.join(IDENTITY_FILE_NAME))
+            .unwrap()
+            .public_key();
+
+        let client = Arc::new(NodeIdentity::generate().unwrap());
+        TrustedKeys::load(dir.join(TRUSTED_CLIENTS_FILE_NAME))
+            .unwrap()
+            .add(client.public_key(), "test-client")
+            .unwrap();
+
+        let server_task = tokio::spawn(async move {
+            let conn = listener.accept().await;
+            (listener, conn.map(|c| c.peer_node_key()))
+        });
+        let _client_conn = QuicClientTransport::new(QuicTransportConfig::default())
+            .connect_mtls(
+                addr,
+                ClientAuth {
+                    identity: client.clone(),
+                    host_key,
+                },
+            )
+            .await
+            .expect("a client listed in trusted_clients should connect");
+        let (_listener, seen) = tokio::time::timeout(Duration::from_secs(5), server_task)
+            .await
+            .expect("server task timed out")
+            .expect("server task panicked");
+        assert_eq!(seen, Some(Some(client.public_key())));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
