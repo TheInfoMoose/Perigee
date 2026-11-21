@@ -29,6 +29,8 @@ Usage: perigee-host [run] [OPTIONS]
        perigee-host trust list [--config-dir <DIR>]
        perigee-host trust remove <KEY> [--config-dir <DIR>]
        perigee-host pair [--bind <ADDR>] [--ttl <SECONDS>] [--config-dir <DIR>]
+       perigee-host snapshot --out <FILE.ppm> [--output <INDEX>]
+       perigee-host input-test
 
 Key management:
   identity              Print this host's node key (created on first use)
@@ -37,6 +39,10 @@ Key management:
   trust remove          Stop trusting KEY
   pair                  Open a one-client SSH pairing window (default 127.0.0.1:4434, 600 s)
                         and print the host key and a one-time secret for `perigee pair`
+
+Live checks (Linux, run inside the Wayland session):
+  snapshot              Capture one frame of output INDEX (default 0) to a PPM file
+  input-test            Move the pointer to the centre, click, and type \"perigee\" via /dev/uinput
 
 Options:
   --bind <ADDR>         UDP socket bind address (default: 127.0.0.1:4433, loopback-only)
@@ -120,6 +126,7 @@ pub enum HostCommand {
     Run(HostOptions),
     Admin(HostAdmin),
     Pair(PairArgs),
+    Tool(HostTool),
     Help,
     Version,
 }
@@ -144,6 +151,15 @@ pub enum HostAdmin {
     },
 }
 
+/// A one-shot local tool (`perigee-host snapshot`, `perigee-host input-test`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostTool {
+    /// Capture one frame of Wayland output `output` and write it to `out` as a PPM.
+    Snapshot { out: PathBuf, output: usize },
+    /// Create the uinput devices, move the pointer to the centre, click, and type `perigee`.
+    InputTest,
+}
+
 /// Parsed arguments for `perigee-host pair`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PairArgs {
@@ -156,6 +172,12 @@ pub struct PairArgs {
 
 /// Parses `perigee-host` CLI arguments (`args` excludes the program name) on top of `base`.
 pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand> {
+    match args.first().map(String::as_str) {
+        Some("snapshot") => return parse_snapshot_args(&args[1..]).map(HostCommand::Tool),
+        Some("input-test") if args.len() == 1 => return Ok(HostCommand::Tool(HostTool::InputTest)),
+        Some("input-test") => bail!("input-test takes no arguments"),
+        _ => {}
+    }
     if args.first().map(String::as_str) == Some("pair") {
         return parse_host_pair(&args[1..]).map(HostCommand::Pair);
     }
@@ -310,6 +332,30 @@ fn parse_host_pair(args: &[String]) -> Result<PairArgs> {
     Ok(pair)
 }
 
+fn parse_snapshot_args(args: &[String]) -> Result<HostTool> {
+    let mut out = None;
+    let mut output = 0usize;
+    let mut i = 0;
+    while i < args.len() {
+        let flag = args[i].as_str();
+        let Some(value) = args.get(i + 1).filter(|v| !v.is_empty()) else {
+            bail!("{flag} needs a value");
+        };
+        match flag {
+            "--out" => out = Some(PathBuf::from(value)),
+            "--output" => {
+                output = value.parse().with_context(|| {
+                    format!("invalid --output '{value}': expected an output index")
+                })?;
+            }
+            other => bail!("unknown argument '{other}'; run with --help"),
+        }
+        i += 2;
+    }
+    let out = out.ok_or_else(|| anyhow!("snapshot needs --out <FILE>"))?;
+    Ok(HostTool::Snapshot { out, output })
+}
+
 /// Runs a key-management subcommand and returns the text to print.
 pub fn run_host_admin(admin: &HostAdmin) -> Result<String> {
     let dir = |config_dir: &Option<PathBuf>| {
@@ -387,6 +433,81 @@ pub async fn run_host_pair(args: &PairArgs, announce: impl FnOnce(&str)) -> Resu
             client.label
         )),
         None => bail!("pairing window expired; nobody paired"),
+    }
+}
+
+/// Runs a one-shot local tool and returns the line to print.
+pub fn run_host_tool(tool: &HostTool) -> Result<String> {
+    #[cfg(target_os = "linux")]
+    {
+        use crate::HostInputInjector;
+        use crate::backends::FrameCapturer;
+        use perigee_protocol::{ElementState, InputEvent, KeyModifiers, MouseButtonCode};
+
+        match tool {
+            HostTool::Snapshot { out, output } => {
+                let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
+                    .map(PathBuf::from)
+                    .context(
+                        "snapshot needs XDG_RUNTIME_DIR (run it inside the Wayland session)",
+                    )?;
+                let mut capturer =
+                    crate::backends::WaylandShmCapturer::connect(None, &runtime_dir, *output)?;
+                let frame = capturer.capture_next_frame()?;
+                let ppm = crate::encode_ppm(
+                    frame.width,
+                    frame.height,
+                    frame.stride,
+                    frame.pixel_format,
+                    &frame.data,
+                )?;
+                std::fs::write(out, ppm)
+                    .with_context(|| format!("failed to write {}", out.display()))?;
+                Ok(format!(
+                    "wrote {}x{} frame of output {output} to {}",
+                    frame.width,
+                    frame.height,
+                    out.display()
+                ))
+            }
+            HostTool::InputTest => {
+                let injector = crate::backends::UinputInjector::new(1920, 1080)?;
+                // Give the compositor time to pick up the new devices before sending events.
+                std::thread::sleep(Duration::from_secs(1));
+                injector.inject_input(&InputEvent::MouseMove {
+                    monitor_id: 0,
+                    x: 0.5,
+                    y: 0.5,
+                    is_absolute: true,
+                })?;
+                for state in [ElementState::Pressed, ElementState::Released] {
+                    injector.inject_input(&InputEvent::MouseButton {
+                        button: MouseButtonCode::Left,
+                        state,
+                        x: 0.5,
+                        y: 0.5,
+                    })?;
+                }
+                // evdev KEY_P, KEY_E, KEY_R, KEY_I, KEY_G, KEY_E, KEY_E
+                for scancode in [25u32, 18, 19, 23, 34, 18, 18] {
+                    for state in [ElementState::Pressed, ElementState::Released] {
+                        injector.inject_input(&InputEvent::KeyEvent {
+                            key_code: 0,
+                            scancode,
+                            state,
+                            modifiers: KeyModifiers::default(),
+                        })?;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(200));
+                Ok("moved the pointer to the centre, clicked, and typed \"perigee\"".to_string())
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = tool;
+        bail!("snapshot and input-test are Linux only")
     }
 }
 
@@ -1059,5 +1180,37 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
         assert!(parse_host_args(&bad, HostOptions::default()).is_err());
+    }
+
+    #[test]
+    fn test_parse_host_tools() {
+        let snap: Vec<String> = [
+            "snapshot",
+            "--out",
+            "/tmp/perigee-test/frame.ppm",
+            "--output",
+            "1",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            parse_host_args(&snap, HostOptions::default()).unwrap(),
+            HostCommand::Tool(HostTool::Snapshot {
+                out: PathBuf::from("/tmp/perigee-test/frame.ppm"),
+                output: 1,
+            })
+        );
+        let no_out: Vec<String> = ["snapshot"].iter().map(|s| s.to_string()).collect();
+        assert!(parse_host_args(&no_out, HostOptions::default()).is_err());
+        assert_eq!(
+            parse_host_args(&["input-test".to_string()], HostOptions::default()).unwrap(),
+            HostCommand::Tool(HostTool::InputTest)
+        );
+        let extra: Vec<String> = ["input-test", "now"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(parse_host_args(&extra, HostOptions::default()).is_err());
     }
 }

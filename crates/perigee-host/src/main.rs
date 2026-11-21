@@ -15,7 +15,7 @@
 use anyhow::Result;
 use perigee_host::{
     HOST_USAGE, HostCommand, bind_host, resolve_host_command, run_host, run_host_admin,
-    run_host_pair, shutdown_signal,
+    run_host_pair, run_host_tool, shutdown_signal,
 };
 
 #[tokio::main]
@@ -25,6 +25,7 @@ async fn main() -> Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
+        .with_writer(std::io::stderr)
         .init();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -44,6 +45,10 @@ async fn main() -> Result<()> {
         HostCommand::Pair(args) => {
             let done = run_host_pair(&args, |text| println!("{text}")).await?;
             println!("{done}");
+            Ok(())
+        }
+        HostCommand::Tool(tool) => {
+            println!("{}", run_host_tool(&tool)?);
             Ok(())
         }
         HostCommand::Run(opts) => {

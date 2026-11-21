@@ -11,7 +11,8 @@ use perigee_cli::{
 };
 use perigee_client::{ConnectOptions, SessionState, connect};
 use perigee_host::{
-    HOST_USAGE, HostCommand, bind_host, run_host, run_host_admin, run_host_pair, shutdown_signal,
+    HOST_USAGE, HostCommand, bind_host, run_host, run_host_admin, run_host_pair, run_host_tool,
+    shutdown_signal,
 };
 use perigee_net::node_key_to_hex;
 
@@ -22,6 +23,7 @@ async fn main() -> Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
+        .with_writer(std::io::stderr)
         .init();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -53,6 +55,10 @@ async fn main() -> Result<()> {
         CliCommand::Host(HostCommand::Pair(args)) => {
             let done = run_host_pair(&args, |text| println!("{text}")).await?;
             println!("{done}");
+            Ok(())
+        }
+        CliCommand::Host(HostCommand::Tool(tool)) => {
+            println!("{}", run_host_tool(&tool)?);
             Ok(())
         }
         CliCommand::Host(HostCommand::Run(opts)) => {

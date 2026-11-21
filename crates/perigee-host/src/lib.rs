@@ -65,8 +65,8 @@ pub use ppm::encode_ppm;
 pub mod host;
 pub use host::{
     DEFAULT_BIND_ADDR, DEFAULT_NODE_NAME, HOST_USAGE, HostAdmin, HostCommand, HostOptions,
-    PairArgs, TrustFileAuthorizer, bind_host, host_config_dir, parse_host_args,
-    resolve_host_command, run_host, run_host_admin, run_host_pair, shutdown_signal,
+    HostTool, PairArgs, TrustFileAuthorizer, bind_host, host_config_dir, parse_host_args,
+    resolve_host_command, run_host, run_host_admin, run_host_pair, run_host_tool, shutdown_signal,
 };
 
 /// Operating System Display & Frame Capture Backend
