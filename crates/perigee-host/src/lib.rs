@@ -62,6 +62,13 @@ pub use encoder::{
 pub mod ppm;
 pub use ppm::encode_ppm;
 
+#[cfg(target_os = "linux")]
+pub mod seat;
+#[cfg(target_os = "linux")]
+pub use seat::{
+    ActiveSession, LoginctlRunner, SystemLoginctl, find_wayland_socket, query_active_session,
+};
+
 pub mod host;
 pub use host::{
     DEFAULT_BIND_ADDR, DEFAULT_NODE_NAME, HOST_USAGE, HostAdmin, HostCommand, HostOptions,
