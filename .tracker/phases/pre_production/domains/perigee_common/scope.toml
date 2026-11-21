@@ -29,3 +29,10 @@ title = "Delete channel-binding crypto + 4 common deps; README Auth → Works"
 status = "closed"
 severity = "medium"
 created_at = "2026-11-20T02:43:56Z"
+
+[[items.tasks]]
+id = "TASK-0084"
+title = "Delete unused vault token store + simply-transfer-crypto dep (TASK-0039)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-21T14:26:51Z"

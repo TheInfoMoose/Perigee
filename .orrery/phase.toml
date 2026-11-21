@@ -1,0 +1,74 @@
+# Written by phased-step.sh new-phase from the plan's Up Next table.
+# Regenerated every phase; edits here are lost.
+
+[[queue]]
+step = "5A"
+item = "TASK-0082"
+
+[[queue]]
+step = "5B"
+item = "TASK-0083"
+
+[[queue]]
+step = "5C"
+item = "TASK-0084"
+
+[[queue]]
+step = "5D"
+item = "TASK-0085"
+
+[[queue]]
+step = "5E"
+item = "TASK-0086"
+
+[[queue]]
+step = "5F"
+item = "TASK-0087"
+
+[[queue]]
+step = "5G"
+item = "TASK-0088"
+
+[[queue]]
+step = "5H"
+item = "TASK-0089"
+
+[[queue]]
+step = "5I"
+item = "TASK-0090"
+
+[[queue]]
+step = "5J"
+item = "TASK-0091"
+
+[[queue]]
+step = "5K"
+item = "TASK-0092"
+
+[[queue]]
+step = "5L"
+item = "TASK-0093"
+
+[[queue]]
+step = "5M"
+item = "TASK-0094"
+
+[[queue]]
+step = "5N"
+item = "TASK-0095"
+
+[[queue]]
+step = "5O"
+item = "TASK-0096"
+
+[[queue]]
+step = "5P"
+item = "TASK-0097"
+
+[[queue]]
+user = "5Q"
+title = "Live checks in your COSMIC session (snapshot, input-test, --media live + --dump-frame)"
+
+[[queue]]
+user = "5R"
+title = "Service install, greeter → user → lock test"
