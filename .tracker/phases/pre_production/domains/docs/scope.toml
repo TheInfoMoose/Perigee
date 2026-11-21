@@ -126,14 +126,14 @@ created_at = "2026-11-20T22:51:41Z"
 [[items.tasks]]
 id = "TASK-0065"
 title = "Update AGENTS.md and the wire-and-quic skill for Phase 4 mTLS"
-status = "open"
+status = "closed"
 severity = "low"
 created_at = "2026-11-20T23:07:03Z"
 
 [[items.tasks]]
 id = "TASK-0079"
 title = "README pairing section; AGENTS.md + wire-and-quic skill match HEAD (TASK-0065)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-21T02:07:54Z"
 
@@ -143,3 +143,10 @@ title = "Research report: headless capture + greeter seat following (TASK-0002)"
 status = "open"
 severity = "medium"
 created_at = "2026-11-21T02:07:54Z"
+
+[[items.tasks]]
+id = "TASK-0081"
+title = "Fix stale README host note and run-examples placement"
+status = "pending"
+severity = "low"
+created_at = "2026-11-21T06:14:44Z"
