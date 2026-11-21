@@ -2,73 +2,37 @@
 # Regenerated every phase; edits here are lost.
 
 [[queue]]
-step = "5A"
-item = "TASK-0082"
+step = "5BA"
+item = "TASK-0104"
 
 [[queue]]
-step = "5B"
-item = "TASK-0083"
+step = "5BB"
+item = "TASK-0105"
 
 [[queue]]
-step = "5C"
-item = "TASK-0084"
+step = "5BC"
+item = "TASK-0106"
 
 [[queue]]
-step = "5D"
-item = "TASK-0085"
+step = "5BD"
+item = "TASK-0107"
 
 [[queue]]
-step = "5E"
-item = "TASK-0086"
+step = "5BE"
+item = "TASK-0108"
 
 [[queue]]
-step = "5F"
-item = "TASK-0087"
+step = "5BF"
+item = "TASK-0109"
 
 [[queue]]
-step = "5G"
-item = "TASK-0088"
+step = "5BG"
+item = "TASK-0110"
 
 [[queue]]
-step = "5H"
-item = "TASK-0089"
+step = "5BH"
+item = "TASK-0111"
 
 [[queue]]
-step = "5I"
-item = "TASK-0090"
-
-[[queue]]
-step = "5J"
-item = "TASK-0091"
-
-[[queue]]
-step = "5K"
-item = "TASK-0092"
-
-[[queue]]
-step = "5L"
-item = "TASK-0093"
-
-[[queue]]
-step = "5M"
-item = "TASK-0094"
-
-[[queue]]
-step = "5N"
-item = "TASK-0095"
-
-[[queue]]
-step = "5O"
-item = "TASK-0096"
-
-[[queue]]
-step = "5P"
-item = "TASK-0097"
-
-[[queue]]
-user = "5Q"
-title = "Live checks in your COSMIC session (snapshot, input-test, --media live + --dump-frame)"
-
-[[queue]]
-user = "5R"
-title = "Service install, greeter → user → lock test"
+user = "5BI"
+title = "Re-run the service test (5R) with frame timing"

@@ -1,0 +1,20 @@
+schema_version = 2
+
+[item]
+id = "TASK-0108"
+type = "task"
+title = "CLI host usage; --dump-frame retry (TASK-0101)"
+status = "open"
+severity = "medium"
+scope_ref = "perigee_cli"
+created_at = "2026-11-21T20:59:58Z"
+updated_at = "2026-11-21T20:59:58Z"
+source_ref = "STEP 5BE"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+previous_fixes = []

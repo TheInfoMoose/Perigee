@@ -84,8 +84,8 @@ created_at = "2026-11-20T23:07:03Z"
 
 [[items.tasks]]
 id = "TASK-0082"
-title = "rustix 1.1.5 → 1.1.6 (BUG-0009)"
-status = "pending"
+title = "Deferred 2026-11-21 (b532b64): cargo also re-points 6 windows-sys edges, which the gate forbade. Re-split as STEP 5BA (accepts those edges)."
+status = "closed"
 severity = "medium"
 created_at = "2026-11-21T14:26:51Z"
 
@@ -109,3 +109,17 @@ title = "Limit what CAP_SETUID lets perigee-host become"
 status = "open"
 severity = "medium"
 created_at = "2026-11-21T18:08:13Z"
+
+[[items.tasks]]
+id = "TASK-0104"
+title = "rustix 1.1.6, accept cargo's windows-sys edge moves (5A re-split; BUG-0009, TASK-0098)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-21T20:59:58Z"
+
+[[items.tasks]]
+id = "TASK-0105"
+title = "uinput named ACL for the perigee group (BUG-0011)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-21T20:59:58Z"

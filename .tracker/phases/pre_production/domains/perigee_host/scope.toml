@@ -200,3 +200,38 @@ title = "Investigate low frame rate and slow first frame under follow-seat"
 status = "pending"
 severity = "medium"
 created_at = "2026-11-21T20:40:28Z"
+
+[[items.tasks]]
+id = "TASK-0106"
+title = "Follow the greeter whatever its logind Type (BUG-0012)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-21T20:59:58Z"
+
+[[items.tasks]]
+id = "TASK-0107"
+title = "Full error chain in refusals and serve warnings (TASK-0102)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-21T20:59:58Z"
+
+[[items.tasks]]
+id = "TASK-0109"
+title = "WorkerStopper kills a blocked capture worker (BUG-0013)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-21T20:59:58Z"
+
+[[items.tasks]]
+id = "TASK-0110"
+title = "Capture on a blocking thread, stop-aware sends, worker stop, frame timing (BUG-0013, TASK-0099, TASK-0103)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-21T20:59:58Z"
+
+[[items.tasks]]
+id = "TASK-0111"
+title = "capture-worker fits frames to the 4 MiB wire budget (TASK-0103 partial)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-21T20:59:58Z"
