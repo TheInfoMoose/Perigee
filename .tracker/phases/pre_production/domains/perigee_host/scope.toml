@@ -218,7 +218,7 @@ created_at = "2026-11-21T20:59:58Z"
 [[items.tasks]]
 id = "TASK-0109"
 title = "WorkerStopper kills a blocked capture worker (BUG-0013)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-21T20:59:58Z"
 
