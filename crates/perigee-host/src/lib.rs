@@ -54,6 +54,9 @@ pub use daemon::{CLIENT_HELLO_TIMEOUT, HostSessionEngine, PerigeeHostDaemon};
 pub mod encoder;
 pub use encoder::{EncoderConfig, MacOsVideoToolboxEncoder, SoftwareVideoEncoder, VideoEncoder};
 
+pub mod ppm;
+pub use ppm::encode_ppm;
+
 pub mod host;
 pub use host::{
     DEFAULT_BIND_ADDR, DEFAULT_NODE_NAME, HOST_USAGE, HostAdmin, HostCommand, HostOptions,
