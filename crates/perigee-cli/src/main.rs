@@ -1,6 +1,5 @@
 //! `perigee` Command-Line Client and Embedded Host Entrypoint.
 
-use std::fmt::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -11,6 +10,7 @@ use perigee_cli::{
 };
 use perigee_client::{ConnectOptions, SessionState, connect};
 use perigee_host::{HOST_USAGE, HostCommand, bind_host, run_host, run_host_admin, shutdown_signal};
+use perigee_net::node_key_to_hex;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -56,17 +56,6 @@ async fn main() -> Result<()> {
     }
 }
 
-fn format_cert_sha256(digest: Option<[u8; 32]>) -> String {
-    let Some(bytes) = digest else {
-        return String::from("unknown");
-    };
-    let mut hex = String::with_capacity(64);
-    for b in bytes {
-        let _ = write!(hex, "{b:02x}");
-    }
-    hex
-}
-
 async fn run_connect(args: ConnectArgs) -> Result<()> {
     let auth = client_auth_for(&args)?;
     let mut opts = ConnectOptions::new(args.target.clone(), auth);
@@ -74,10 +63,13 @@ async fn run_connect(args: ConnectArgs) -> Result<()> {
     opts.handshake_timeout = args.handshake_timeout;
 
     let mut session = connect(opts).await?;
-    let cert_hex = format_cert_sha256(session.peer_cert_sha256());
+    let host_key = session
+        .peer_node_key()
+        .map(|key| node_key_to_hex(&key))
+        .unwrap_or_else(|| String::from("unknown"));
     println!(
-        "connected to {}; host certificate sha256 {}",
-        session.target_addr, cert_hex
+        "connected to {}; host node key {}",
+        session.target_addr, host_key
     );
 
     let frame_count = Arc::new(AtomicU64::new(0));
