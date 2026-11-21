@@ -2,22 +2,18 @@
 name: perigee-wire-and-quic
 description: >-
   Procedures and invariants for implementing and modifying perigee-common,
-  perigee-protocol, and perigee-net (NIST vault, Ed25519 mTLS node identities,
+  perigee-protocol, and perigee-net (Ed25519 mTLS node identities,
   SSH pairing via simply-transfer-link, postcard wire framing, if-addrs VPN
   discovery, socket2 adapter binding, and quinn QUIC streams).
 ---
 
-# Perigee Wire Protocol, NIST Vault & QUIC Transport Skill
+# Perigee Wire Protocol & QUIC Transport Skill
 
 Activate this skill when working on `perigee-common`, `perigee-protocol`, or `perigee-net`.
 
 ## 1. `perigee-common` Invariants (`crates/perigee-common`)
 
-- **Secret Zeroization**:
-  - `VaultTokenModel` must derive/implement `zeroize::Zeroize`, call `self.zeroize()` in `Drop`, and mask secret fields with `"[REDACTED]"` in custom `fmt::Debug` implementations.
-- **NIST Credential Vault (`NistVault`)**:
-  - Backed by `simply_transfer_crypto::SecureStorage` (which wraps `keyring-core` with NIST SP 800-57 AES-256-GCM encrypted vault).
-  - Always zeroize temporary `String` buffers returned from `self.storage.get_secret(...)` after deserializing.
+- **No secrets live here.** `perigee-common` holds connection profiles and environment detection only; the node identity (`perigee-net` `NodeIdentity`) is the one long-lived secret.
 
 ## 2. `perigee-protocol` Invariants (`crates/perigee-protocol`)
 

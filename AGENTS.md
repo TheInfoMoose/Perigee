@@ -16,7 +16,7 @@ These rules apply unconditionally to all AI agents operating within the **Perige
 - **Toolchain Baseline**: Rust `1.93+`, `edition = "2024"`, Cargo workspace `resolver = "3"`.
 - **Locked Builds Only**: Every `cargo check`, `cargo clippy`, `cargo test`, and `cargo build` invocation **MUST** pass `--locked`.
 - **Zero Dependency Drift**: Do **NOT** add, remove, or modify crate versions in `Cargo.toml` or `Cargo.lock` unless explicitly instructed by the user.
-- **Vendored Crates**: `ST_Rust_Age` (`simply-transfer-crypto`, `simply-transfer-snapshots`, `simply-transfer-link`) and `libcosmic` (`libcosmic`, `cosmic-config`) are vendored in `vendor/` and patched via `[patch]`. Never replace them with remote git/crates.io dependencies without explicit user instruction.
+- **Vendored Crates**: `ST_Rust_Age` (`simply-transfer-link`; `simply-transfer-crypto` and `simply-transfer-snapshots` stay on disk but are not in the crate graph) and `libcosmic` (`libcosmic`, `cosmic-config`) are vendored in `vendor/` and patched via `[patch]`. Never replace them with remote git/crates.io dependencies without explicit user instruction.
 - **Wire Serialization Standard**: Always use `postcard` (`perigee_protocol::encode_wire_message`, `decode_wire_message`, `encode_length_prefixed`, `decode_length_prefixed`) with `MAX_WIRE_FRAME_BYTES` (16 MiB) bounds checking. Do **NOT** introduce `bincode`.
 
 ## 3. Code Quality, Safety & Error Handling
@@ -24,7 +24,7 @@ These rules apply unconditionally to all AI agents operating within the **Perige
   - Library crates (`perigee-common`, `perigee-protocol`) **MUST** define explicit typed errors via `thiserror::Error`.
   - Transport, channel, daemon, and UI crates (`perigee-net`, `perigee-channels`, `perigee-client`, `perigee-host`, `perigee-ui`) may use `anyhow::Result` with `.context(...)` at subsystem boundaries alongside typed domain errors.
 - **Memory & Cryptographic Hygiene**:
-  - All secret and token structs (`NodeIdentity` in `perigee-net`, `VaultTokenModel`) **MUST** implement `zeroize::Zeroize` and zeroize on `Drop`, and redact secrets in `fmt::Debug`.
+  - All secret and token structs (`NodeIdentity` in `perigee-net`) **MUST** implement `zeroize::Zeroize` and zeroize on `Drop`, and redact secrets in `fmt::Debug`.
   - Node identity is the only long-lived secret: `NodeIdentity` (Ed25519, `<config dir>/identity.key`, 0600, written via `fsutil::write_private_file`). Trust lives in `trusted_clients` / `known_hosts` (`TrustedKeys`). Never log a pairing secret.
   - Never allow unannotated `unsafe` blocks. Every FFI call (`libc::setsockopt`, Win32 `SendInput`/`DXGI`, macOS `objc2`/`CGEvent`, Wayland/DRM/X11 handles) **MUST** be preceded by a `// SAFETY:` comment explaining pointer validity, lifetime, and thread-safety invariants.
 - **Documentation & Linting**: Preserve existing module docstrings (`//!`) and item docstrings (`///`). All code must pass `cargo clippy --workspace --all-targets --locked -- -D warnings` with zero warnings.

@@ -35,7 +35,6 @@ perigee-ui = { path = "crates/perigee-ui", version = "0.1.0" }
 perigee-cli = { path = "crates/perigee-cli", version = "0.1.0" }
 
 # Simply Transfer v2 Integration (ST_Rust_Age)
-simply-transfer-crypto = { path = "vendor/ST_Rust_Age/simply-transfer-crypto", version = "0.1.0" }
 simply-transfer-snapshots = { path = "vendor/ST_Rust_Age/simply-transfer-snapshots", version = "0.1.0" }
 simply-transfer-link = { path = "vendor/ST_Rust_Age/simply-transfer-link", version = "0.1.0" }
 
@@ -134,9 +133,6 @@ tempfile = "3.27.0"
 # Structured Logging & Diagnostics
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-
-[patch."https://github.com/TheInfoMoose/ST_Rust_Age"]
-simply-transfer-crypto = { path = "vendor/ST_Rust_Age/simply-transfer-crypto" }
 
 [patch."https://github.com/pop-os/libcosmic"]
 libcosmic = { path = "vendor/libcosmic" }

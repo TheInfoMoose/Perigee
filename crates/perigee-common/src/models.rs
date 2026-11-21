@@ -1,8 +1,6 @@
-//! Domain models for connection profiles and NIST session tokens.
+//! Domain models for connection profiles.
 
 use serde::{Deserialize, Serialize};
-use std::fmt;
-use zeroize::Zeroize;
 
 /// Remote Desktop Connection Profile shared across UI, Client, and Server crates.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,37 +54,5 @@ impl ConnectionProfile {
 
     pub fn group(&self) -> &str {
         &self.group_name
-    }
-}
-
-/// Zeroized Vault Session Token Model (NIST SP 800-63B Compliant).
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VaultTokenModel {
-    pub session_token: String,
-    pub auth_method: String,
-    pub expires_at: u64,
-}
-
-impl Zeroize for VaultTokenModel {
-    fn zeroize(&mut self) {
-        self.session_token.zeroize();
-        self.auth_method.zeroize();
-        self.expires_at.zeroize();
-    }
-}
-
-impl Drop for VaultTokenModel {
-    fn drop(&mut self) {
-        self.zeroize();
-    }
-}
-
-impl fmt::Debug for VaultTokenModel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("VaultTokenModel")
-            .field("session_token", &"[REDACTED]")
-            .field("auth_method", &self.auth_method)
-            .field("expires_at", &self.expires_at)
-            .finish()
     }
 }
