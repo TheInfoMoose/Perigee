@@ -15,7 +15,7 @@
 use anyhow::Result;
 use perigee_host::{
     HOST_USAGE, HostCommand, bind_host, resolve_host_command, run_host, run_host_admin,
-    shutdown_signal,
+    run_host_pair, shutdown_signal,
 };
 
 #[tokio::main]
@@ -39,6 +39,11 @@ async fn main() -> Result<()> {
         }
         HostCommand::Admin(admin) => {
             println!("{}", run_host_admin(&admin)?);
+            Ok(())
+        }
+        HostCommand::Pair(args) => {
+            let done = run_host_pair(&args, |text| println!("{text}")).await?;
+            println!("{done}");
             Ok(())
         }
         HostCommand::Run(opts) => {

@@ -3,9 +3,10 @@
 use crate::PerigeeHostDaemon;
 use anyhow::{Context, Result, anyhow, bail};
 use perigee_net::{
-    IDENTITY_FILE_NAME, NODE_KEY_LEN, NodeIdentity, PeerAuthorizer, QuicServerListener,
-    QuicTransportConfig, ServerAuth, TRUSTED_CLIENTS_FILE_NAME, TrustedKeys, VpnInterfaceBinding,
-    default_config_dir, node_key_from_hex, node_key_to_hex,
+    DEFAULT_PAIRING_PORT, DEFAULT_PAIRING_TTL, IDENTITY_FILE_NAME, NODE_KEY_LEN, NodeIdentity,
+    PairingWindow, PeerAuthorizer, QuicServerListener, QuicTransportConfig, ServerAuth,
+    TRUSTED_CLIENTS_FILE_NAME, TrustedKeys, VpnInterfaceBinding, default_config_dir,
+    node_key_from_hex, node_key_to_hex,
 };
 use std::future::Future;
 use std::net::SocketAddr;
@@ -27,12 +28,15 @@ Usage: perigee-host [run] [OPTIONS]
        perigee-host trust add <KEY> <LABEL> [--config-dir <DIR>]
        perigee-host trust list [--config-dir <DIR>]
        perigee-host trust remove <KEY> [--config-dir <DIR>]
+       perigee-host pair [--bind <ADDR>] [--ttl <SECONDS>] [--config-dir <DIR>]
 
 Key management:
   identity              Print this host's node key (created on first use)
   trust add             Allow the client whose node key is KEY (64 hex chars) to connect
   trust list            List trusted client keys
   trust remove          Stop trusting KEY
+  pair                  Open a one-client SSH pairing window (default 127.0.0.1:4434, 600 s)
+                        and print the host key and a one-time secret for `perigee pair`
 
 Options:
   --bind <ADDR>         UDP socket bind address (default: 127.0.0.1:4433, loopback-only)
@@ -110,6 +114,7 @@ impl HostOptions {
 pub enum HostCommand {
     Run(HostOptions),
     Admin(HostAdmin),
+    Pair(PairArgs),
     Help,
     Version,
 }
@@ -134,8 +139,21 @@ pub enum HostAdmin {
     },
 }
 
+/// Parsed arguments for `perigee-host pair`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairArgs {
+    /// TCP address of the pairing window (default `127.0.0.1:4434`).
+    pub bind_addr: SocketAddr,
+    /// How long the window stays open when nobody pairs.
+    pub ttl: Duration,
+    pub config_dir: Option<PathBuf>,
+}
+
 /// Parses `perigee-host` CLI arguments (`args` excludes the program name) on top of `base`.
 pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand> {
+    if args.first().map(String::as_str) == Some("pair") {
+        return parse_host_pair(&args[1..]).map(HostCommand::Pair);
+    }
     if matches!(args.first().map(String::as_str), Some("identity" | "trust")) {
         return parse_host_admin(args).map(HostCommand::Admin);
     }
@@ -237,6 +255,45 @@ fn parse_host_admin(args: &[String]) -> Result<HostAdmin> {
     }
 }
 
+fn parse_host_pair(args: &[String]) -> Result<PairArgs> {
+    let mut pair = PairArgs {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], DEFAULT_PAIRING_PORT)),
+        ttl: DEFAULT_PAIRING_TTL,
+        config_dir: None,
+    };
+    let mut i = 0;
+    while i < args.len() {
+        let flag = args[i].as_str();
+        let value = match args.get(i + 1) {
+            Some(v) if !v.is_empty() => v.as_str(),
+            _ if matches!(flag, "--bind" | "--ttl" | "--config-dir") => {
+                bail!("{flag} needs a value")
+            }
+            _ => bail!("unknown argument '{flag}'; run with --help"),
+        };
+        match flag {
+            "--bind" => {
+                pair.bind_addr = value
+                    .parse()
+                    .with_context(|| format!("invalid --bind address '{value}'"))?;
+            }
+            "--ttl" => {
+                let secs: u64 = value
+                    .parse()
+                    .with_context(|| format!("invalid --ttl '{value}'"))?;
+                if secs == 0 {
+                    bail!("--ttl must be at least 1 second");
+                }
+                pair.ttl = Duration::from_secs(secs);
+            }
+            "--config-dir" => pair.config_dir = Some(PathBuf::from(value)),
+            other => bail!("unknown argument '{other}'; run with --help"),
+        }
+        i += 2;
+    }
+    Ok(pair)
+}
+
 /// Runs a key-management subcommand and returns the text to print.
 pub fn run_host_admin(admin: &HostAdmin) -> Result<String> {
     let dir = |config_dir: &Option<PathBuf>| {
@@ -280,6 +337,40 @@ pub fn run_host_admin(admin: &HostAdmin) -> Result<String> {
                 bail!("{} is not a trusted client", node_key_to_hex(key))
             }
         }
+    }
+}
+
+/// Opens a pairing window, hands the instructions to show to `announce`, and waits for one
+/// client. Returns the line to print once the client is trusted; errors when the window expires.
+pub async fn run_host_pair(args: &PairArgs, announce: impl FnOnce(&str)) -> Result<String> {
+    let config_dir = host_config_dir(&HostOptions {
+        config_dir: args.config_dir.clone(),
+        ..HostOptions::default()
+    })?;
+    let identity = NodeIdentity::load_or_create(&config_dir.join(IDENTITY_FILE_NAME))?;
+    let window = PairingWindow::bind(
+        &identity,
+        config_dir.join(TRUSTED_CLIENTS_FILE_NAME),
+        args.bind_addr,
+        args.ttl,
+    )
+    .await?;
+    let addr = window.local_addr()?;
+    let key = identity.public_key_hex();
+    announce(&format!(
+        "Pairing window open on {addr} for {} s.\nhost key: {key}\nsecret:   {}\nOn the client run:\n  perigee pair <HOST> {key} {} --label <NAME> --pair-port {}",
+        args.ttl.as_secs(),
+        window.secret(),
+        window.secret(),
+        addr.port()
+    ));
+    match window.run().await? {
+        Some(client) => Ok(format!(
+            "trusted {} as {}",
+            node_key_to_hex(&client.key),
+            client.label
+        )),
+        None => bail!("pairing window expired; nobody paired"),
     }
 }
 
@@ -870,5 +961,63 @@ mod tests {
                 ..HostOptions::default()
             })
         );
+    }
+
+    #[test]
+    fn test_parse_host_pair_args() {
+        let args: Vec<String> = [
+            "pair",
+            "--bind",
+            "192.0.2.10:5000",
+            "--ttl",
+            "30",
+            "--config-dir",
+            "/tmp/perigee-test/pair",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            parse_host_args(&args, HostOptions::default()).unwrap(),
+            HostCommand::Pair(PairArgs {
+                bind_addr: "192.0.2.10:5000".parse().unwrap(),
+                ttl: Duration::from_secs(30),
+                config_dir: Some(PathBuf::from("/tmp/perigee-test/pair")),
+            })
+        );
+        assert_eq!(
+            parse_host_args(&["pair".to_string()], HostOptions::default()).unwrap(),
+            HostCommand::Pair(PairArgs {
+                bind_addr: "127.0.0.1:4434".parse().unwrap(),
+                ttl: DEFAULT_PAIRING_TTL,
+                config_dir: None,
+            })
+        );
+        let zero: Vec<String> = ["pair", "--ttl", "0"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(parse_host_args(&zero, HostOptions::default()).is_err());
+        let bogus: Vec<String> = ["pair", "--bogus"].iter().map(|s| s.to_string()).collect();
+        assert!(parse_host_args(&bogus, HostOptions::default()).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_run_host_pair_expires_without_client() {
+        let dir = std::env::temp_dir().join(format!("perigee-host-pair-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let args = PairArgs {
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            ttl: Duration::from_secs(1),
+            config_dir: Some(dir.clone()),
+        };
+        let mut announced = String::new();
+        let err = run_host_pair(&args, |text| announced = text.to_string())
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("expired"), "got: {err:#}");
+        assert!(announced.contains("secret:"));
+        assert!(announced.contains("perigee pair <HOST>"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

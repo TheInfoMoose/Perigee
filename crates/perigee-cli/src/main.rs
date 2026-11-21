@@ -9,7 +9,9 @@ use perigee_cli::{
     CliCommand, ConnectArgs, USAGE, client_auth_for, resolve_cli_command, run_client_admin,
 };
 use perigee_client::{ConnectOptions, SessionState, connect};
-use perigee_host::{HOST_USAGE, HostCommand, bind_host, run_host, run_host_admin, shutdown_signal};
+use perigee_host::{
+    HOST_USAGE, HostCommand, bind_host, run_host, run_host_admin, run_host_pair, shutdown_signal,
+};
 use perigee_net::node_key_to_hex;
 
 #[tokio::main]
@@ -41,6 +43,11 @@ async fn main() -> Result<()> {
         }
         CliCommand::Host(HostCommand::Admin(admin)) => {
             println!("{}", run_host_admin(&admin)?);
+            Ok(())
+        }
+        CliCommand::Host(HostCommand::Pair(args)) => {
+            let done = run_host_pair(&args, |text| println!("{text}")).await?;
+            println!("{done}");
             Ok(())
         }
         CliCommand::Host(HostCommand::Run(opts)) => {
