@@ -136,12 +136,47 @@ impl TrustedKeys {
         Ok(())
     }
 
+    /// Pins `key` under `label`, replacing only an entry with the same label, and rewrites the
+    /// file. One host key may be pinned under several labels (for example a name and an IP).
+    pub fn pin(&self, key: [u8; NODE_KEY_LEN], label: &str) -> Result<()> {
+        validate_label(label)?;
+        let mut entries = self.entries.write().unwrap_or_else(|p| p.into_inner());
+        let mut next: Vec<TrustedKey> = entries
+            .iter()
+            .filter(|entry| entry.label != label)
+            .cloned()
+            .collect();
+        next.push(TrustedKey {
+            key,
+            label: label.to_string(),
+        });
+        self.save(&next)?;
+        *entries = next;
+        Ok(())
+    }
+
     /// Removes `key` and rewrites the file; returns whether it was present.
     pub fn remove(&self, key: &[u8; NODE_KEY_LEN]) -> Result<bool> {
         let mut entries = self.entries.write().unwrap_or_else(|p| p.into_inner());
         let next: Vec<TrustedKey> = entries
             .iter()
             .filter(|entry| &entry.key != key)
+            .cloned()
+            .collect();
+        if next.len() == entries.len() {
+            return Ok(false);
+        }
+        self.save(&next)?;
+        *entries = next;
+        Ok(true)
+    }
+
+    /// Removes the entry labelled `label` and rewrites the file; returns whether it was present.
+    pub fn remove_label(&self, label: &str) -> Result<bool> {
+        let mut entries = self.entries.write().unwrap_or_else(|p| p.into_inner());
+        let next: Vec<TrustedKey> = entries
+            .iter()
+            .filter(|entry| entry.label != label)
             .cloned()
             .collect();
         if next.len() == entries.len() {
@@ -273,6 +308,27 @@ mod tests {
                 label: "b".to_string()
             }]
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_pin_keeps_one_key_under_many_labels() {
+        let dir = temp_dir("pin");
+        let store = TrustedKeys::load(dir.join(KNOWN_HOSTS_FILE_NAME)).unwrap();
+        store.pin(K1, "host.example.com:4433").unwrap();
+        store.pin(K1, "192.0.2.10:4433").unwrap();
+        assert_eq!(store.entries().len(), 2);
+        store.pin(K2, "192.0.2.10:4433").unwrap();
+        assert_eq!(store.find_by_label("192.0.2.10:4433").unwrap().key, K2);
+        assert_eq!(
+            store.find_by_label("host.example.com:4433").unwrap().key,
+            K1
+        );
+        assert!(store.remove_label("host.example.com:4433").unwrap());
+        assert!(!store.remove_label("host.example.com:4433").unwrap());
+        assert_eq!(store.entries().len(), 1);
+        let reloaded = TrustedKeys::load(dir.join(KNOWN_HOSTS_FILE_NAME)).unwrap();
+        assert_eq!(reloaded.entries(), store.entries());
         let _ = fs::remove_dir_all(&dir);
     }
 

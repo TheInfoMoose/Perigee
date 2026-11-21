@@ -55,6 +55,28 @@ pub fn resolve_host_addr(target: &str) -> Result<SocketAddr> {
         .ok_or_else(|| anyhow!("No socket addresses resolved for '{trimmed}'"))
 }
 
+/// The `known_hosts` label for a connect target: trimmed, lowercased, with the default port
+/// `4433` added when none is given; IP literals in [`SocketAddr`] form (IPv6 in brackets).
+/// Names are not resolved, so `host.example.com` and `192.0.2.10` stay different labels.
+pub fn canonical_target(target: &str) -> Result<String> {
+    let trimmed = target.trim();
+    if trimmed.is_empty() {
+        bail!("Connection target host address must not be empty");
+    }
+    if let Ok(addr) = trimmed.parse::<SocketAddr>() {
+        return Ok(addr.to_string());
+    }
+    if let Ok(ip) = trimmed.parse::<IpAddr>() {
+        return Ok(SocketAddr::new(ip, DEFAULT_PERIGEE_PORT).to_string());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains(':') {
+        Ok(lower)
+    } else {
+        Ok(format!("{lower}:{DEFAULT_PERIGEE_PORT}"))
+    }
+}
+
 /// Parses an optional interface specification into a [`VpnInterfaceBinding`].
 pub fn parse_interface_binding(spec: Option<&str>) -> VpnInterfaceBinding {
     let Some(raw) = spec else {
@@ -72,7 +94,7 @@ pub fn parse_interface_binding(spec: Option<&str>) -> VpnInterfaceBinding {
 
 /// Mutual-TLS credentials from a Perigee config directory: this machine's node identity
 /// (`identity.key`, created on first use) and the host key for `target`, which is
-/// `host_key_override` when given, else the pin saved in `known_hosts` under the label `target`.
+/// `host_key_override` when given, else the pin saved in `known_hosts` under the label [`canonical_target`] gives for `target`.
 pub fn load_client_auth(
     config_dir: &Path,
     target: &str,
@@ -81,14 +103,15 @@ pub fn load_client_auth(
     let identity = Arc::new(NodeIdentity::load_or_create(
         &config_dir.join(IDENTITY_FILE_NAME),
     )?);
+    let label = canonical_target(target)?;
     let host_key = match host_key_override {
         Some(key) => key,
         None => TrustedKeys::load(config_dir.join(KNOWN_HOSTS_FILE_NAME))?
-            .find_by_label(target)
+            .find_by_label(&label)
             .map(|entry| entry.key)
             .ok_or_else(|| {
                 anyhow!(
-                    "no pinned host key for '{target}': run `perigee trust add {target} <KEY>` with the key `perigee-host identity` prints, or pass --host-key"
+                    "no pinned host key for '{label}': run `perigee trust add {label} <KEY>` with the key `perigee-host identity` prints, or pass --host-key"
                 )
             })?,
     };
@@ -253,6 +276,28 @@ mod tests {
 
         let localhost = resolve_host_addr("localhost").unwrap();
         assert_eq!(localhost.port(), DEFAULT_PERIGEE_PORT);
+    }
+
+    #[test]
+    fn test_canonical_target() {
+        assert_eq!(canonical_target("192.0.2.10").unwrap(), "192.0.2.10:4433");
+        assert_eq!(
+            canonical_target(" 192.0.2.10:5000 ").unwrap(),
+            "192.0.2.10:5000"
+        );
+        assert_eq!(
+            canonical_target("2001:db8::1").unwrap(),
+            "[2001:db8::1]:4433"
+        );
+        assert_eq!(
+            canonical_target("Host.Example.com").unwrap(),
+            "host.example.com:4433"
+        );
+        assert_eq!(
+            canonical_target("host.example.com:4433").unwrap(),
+            "host.example.com:4433"
+        );
+        assert!(canonical_target("  ").is_err());
     }
 
     #[test]

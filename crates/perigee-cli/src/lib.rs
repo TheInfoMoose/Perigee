@@ -293,7 +293,8 @@ pub fn run_client_admin(admin: &ClientAdmin) -> Result<String> {
         } => {
             let pins =
                 TrustedKeys::load(client_config_dir(config_dir)?.join(KNOWN_HOSTS_FILE_NAME))?;
-            pins.add(*key, target)?;
+            let target = perigee_client::canonical_target(target)?;
+            pins.pin(*key, &target)?;
             Ok(format!("pinned {} for {target}", node_key_to_hex(key)))
         }
         ClientAdmin::TrustList { config_dir } => {
@@ -312,10 +313,10 @@ pub fn run_client_admin(admin: &ClientAdmin) -> Result<String> {
         ClientAdmin::TrustRemove { config_dir, target } => {
             let pins =
                 TrustedKeys::load(client_config_dir(config_dir)?.join(KNOWN_HOSTS_FILE_NAME))?;
-            let Some(entry) = pins.find_by_label(target) else {
+            let target = perigee_client::canonical_target(target)?;
+            if !pins.remove_label(&target)? {
                 bail!("no pinned host key for '{target}'");
-            };
-            pins.remove(&entry.key)?;
+            }
             Ok(format!("removed pin for {target}"))
         }
     }
@@ -604,6 +605,48 @@ mod tests {
         assert_eq!(
             run_client_admin(&ClientAdmin::TrustList { config_dir }).unwrap(),
             "(no pinned hosts)"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_trust_add_canonicalizes_target() {
+        let dir = std::env::temp_dir().join(format!("perigee-cli-canon-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config_dir = Some(dir.clone());
+        let key = [0x99; NODE_KEY_LEN];
+        assert_eq!(
+            run_client_admin(&ClientAdmin::TrustAdd {
+                config_dir: config_dir.clone(),
+                target: "Host.Example.com".to_string(),
+                key,
+            })
+            .unwrap(),
+            format!("pinned {} for host.example.com:4433", node_key_to_hex(&key))
+        );
+        run_client_admin(&ClientAdmin::TrustAdd {
+            config_dir: config_dir.clone(),
+            target: "192.0.2.10".to_string(),
+            key,
+        })
+        .unwrap();
+        let args = ConnectArgs {
+            target: "host.example.com".to_string(),
+            interface: None,
+            run_for: None,
+            handshake_timeout: perigee_client::DEFAULT_HANDSHAKE_TIMEOUT,
+            host_key: None,
+            config_dir: config_dir.clone(),
+        };
+        assert_eq!(client_auth_for(&args).unwrap().host_key, key);
+        run_client_admin(&ClientAdmin::TrustRemove {
+            config_dir: config_dir.clone(),
+            target: "192.0.2.10:4433".to_string(),
+        })
+        .unwrap();
+        assert_eq!(
+            run_client_admin(&ClientAdmin::TrustList { config_dir }).unwrap(),
+            format!("{} host.example.com:4433", node_key_to_hex(&key))
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
