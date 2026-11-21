@@ -4,11 +4,11 @@ schema_version = 2
 id = "TASK-0099"
 type = "task"
 title = "Move blocking frame capture off the tokio runtime"
-status = "pending"
+status = "open"
 severity = "medium"
 scope_ref = "perigee_host"
 created_at = "2026-11-21T18:08:13Z"
-updated_at = "2026-11-21T18:08:13Z"
+updated_at = "2026-11-21T18:16:38Z"
 
 [effort]
 logged_time_minutes = 0

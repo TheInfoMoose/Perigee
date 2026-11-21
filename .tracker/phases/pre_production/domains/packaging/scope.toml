@@ -99,6 +99,6 @@ created_at = "2026-11-21T14:35:56Z"
 [[items.tasks]]
 id = "TASK-0100"
 title = "Limit what CAP_SETUID lets perigee-host become"
-status = "pending"
+status = "open"
 severity = "medium"
 created_at = "2026-11-21T18:08:13Z"
