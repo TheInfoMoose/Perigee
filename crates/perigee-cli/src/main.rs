@@ -7,6 +7,7 @@ use std::time::Duration;
 use anyhow::Result;
 use perigee_cli::{
     CliCommand, ConnectArgs, USAGE, client_auth_for, resolve_cli_command, run_client_admin,
+    run_client_pair,
 };
 use perigee_client::{ConnectOptions, SessionState, connect};
 use perigee_host::{
@@ -39,6 +40,10 @@ async fn main() -> Result<()> {
         }
         CliCommand::Admin(admin) => {
             println!("{}", run_client_admin(&admin)?);
+            Ok(())
+        }
+        CliCommand::Pair(args) => {
+            println!("{}", run_client_pair(&args).await?);
             Ok(())
         }
         CliCommand::Host(HostCommand::Admin(admin)) => {

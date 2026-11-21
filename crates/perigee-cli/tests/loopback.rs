@@ -5,11 +5,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use perigee_cli::{ClientPairArgs, ConnectArgs, client_auth_for, run_client_pair};
 use perigee_client::{ConnectOptions, SessionState, connect};
 use perigee_host::{HostOptions, bind_host, run_host};
 use perigee_net::{
-    ClientAuth, IDENTITY_FILE_NAME, NODE_KEY_LEN, NodeIdentity, TRUSTED_CLIENTS_FILE_NAME,
-    TrustedKeys,
+    ClientAuth, IDENTITY_FILE_NAME, NODE_KEY_LEN, NodeIdentity, PairingWindow,
+    TRUSTED_CLIENTS_FILE_NAME, TrustedKeys,
 };
 use perigee_protocol::InputEvent;
 use tokio::sync::oneshot;
@@ -168,4 +169,91 @@ async fn test_real_host_and_client_full_lifecycle() {
         .expect("session2 cleanup timed out");
     assert_eq!(session2.peer_node_key(), Some(host_key));
     let _ = std::fs::remove_dir_all(&config_dir);
+}
+
+#[tokio::test]
+async fn test_pairing_then_connect() {
+    let root = std::env::temp_dir().join(format!("perigee-loopback-pair-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let host_dir = root.join("host");
+    let client_dir = root.join("client");
+
+    let host_identity =
+        NodeIdentity::load_or_create(&host_dir.join(IDENTITY_FILE_NAME)).expect("host identity");
+    let window = PairingWindow::bind(
+        &host_identity,
+        host_dir.join(TRUSTED_CLIENTS_FILE_NAME),
+        "127.0.0.1:0".parse().expect("valid loopback addr"),
+        Duration::from_secs(30),
+    )
+    .await
+    .expect("bind pairing window");
+    let pair_port = window.local_addr().expect("pairing addr").port();
+    let secret = window.secret().to_string();
+
+    let host_opts = HostOptions {
+        bind_addr: "127.0.0.1:0".parse().expect("valid loopback addr"),
+        config_dir: Some(host_dir.clone()),
+        ..Default::default()
+    };
+    let (daemon, listener) = bind_host(&host_opts).expect("bind_host should succeed");
+    let addr = listener.local_addr().expect("listener addr");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let host_task = tokio::spawn(async move {
+        run_host(daemon, listener, async {
+            let _ = shutdown_rx.await;
+        })
+        .await
+    });
+
+    let pair_args = ClientPairArgs {
+        target: addr.to_string(),
+        host_key: host_identity.public_key(),
+        secret,
+        label: "testuser-laptop".to_string(),
+        pair_port,
+        config_dir: Some(client_dir.clone()),
+    };
+    let (paired, printed) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(window.run(), run_client_pair(&pair_args))
+    })
+    .await
+    .expect("pairing timed out");
+    let printed = printed.expect("client pairing should succeed");
+    assert!(printed.contains("pinned"), "got: {printed}");
+    let client_key = NodeIdentity::load_or_create(&client_dir.join(IDENTITY_FILE_NAME))
+        .expect("client identity")
+        .public_key();
+    assert_eq!(
+        paired
+            .expect("host pairing window")
+            .map(|client| client.key),
+        Some(client_key)
+    );
+
+    let connect_args = ConnectArgs {
+        target: addr.to_string(),
+        interface: None,
+        run_for: None,
+        handshake_timeout: perigee_client::DEFAULT_HANDSHAKE_TIMEOUT,
+        host_key: None,
+        config_dir: Some(client_dir.clone()),
+    };
+    let auth = client_auth_for(&connect_args).expect("auth from the pins pairing wrote");
+    let session = tokio::time::timeout(
+        Duration::from_secs(5),
+        connect(ConnectOptions::new(addr.to_string(), auth)),
+    )
+    .await
+    .expect("connect timed out")
+    .expect("connect should succeed");
+    assert_eq!(session.state(), SessionState::Active);
+    session.disconnect("pairing test done").await;
+
+    let _ = shutdown_tx.send(());
+    host_task
+        .await
+        .expect("host task panicked")
+        .expect("host exits cleanly");
+    let _ = std::fs::remove_dir_all(&root);
 }

@@ -1,13 +1,15 @@
 //! Argument parsing for the `perigee` command-line tool.
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use perigee_host::{HostCommand, HostOptions, parse_host_args};
 use perigee_net::{
-    ClientAuth, IDENTITY_FILE_NAME, KNOWN_HOSTS_FILE_NAME, NODE_KEY_LEN, NodeIdentity, TrustedKeys,
-    default_config_dir, node_key_from_hex, node_key_to_hex,
+    ClientAuth, DEFAULT_PAIRING_PORT, IDENTITY_FILE_NAME, KNOWN_HOSTS_FILE_NAME, NODE_KEY_LEN,
+    NodeIdentity, TrustedKeys, default_config_dir, node_key_from_hex, node_key_to_hex,
+    pair_with_host,
 };
 
 /// Usage text for `perigee --help`.
@@ -19,6 +21,7 @@ Usage:
   perigee trust add <HOST[:PORT]> <KEY> [--config-dir DIR]
   perigee trust list [--config-dir DIR]
   perigee trust remove <HOST[:PORT]> [--config-dir DIR]
+  perigee pair <HOST[:PORT]> <HOST_KEY> <SECRET> --label NAME [--pair-port PORT] [--config-dir DIR]
   perigee host [--bind ADDR] [--interface NAME] [--name NODE] [--config-dir DIR]
   perigee host identity | host trust add <KEY> <LABEL> | host trust list | host trust remove <KEY>
   perigee --help
@@ -28,6 +31,8 @@ Subcommands:
   connect    Open a client session to <HOST[:PORT]> and print live session status
   identity   Print this machine's node key (created on first use)
   trust      Pin a host's node key for a <HOST[:PORT]> target, list or remove pins
+  pair       Pair with a host's pairing window (perigee-host pair): the host trusts this
+             machine under NAME and this machine pins the host for <HOST[:PORT]>
   host       Run an embedded Perigee host daemon (accepts perigee-host flags)
 
 Connect options:
@@ -51,7 +56,10 @@ Trust is mutual and set up once per pair of machines:
   on the host:    perigee-host identity            -> give KEY to the client
   on the client:  perigee trust add <HOST[:PORT]> <KEY>
   on the client:  perigee identity                 -> give KEY to the host
-  on the host:    perigee-host trust add <KEY> <LABEL>";
+  on the host:    perigee-host trust add <KEY> <LABEL>
+
+Or pair once (the host runs perigee-host pair and shows HOST_KEY and SECRET):
+  on the client:  perigee pair <HOST[:PORT]> <HOST_KEY> <SECRET> --label <NAME>";
 
 /// Parsed arguments for `perigee connect`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,11 +93,26 @@ pub enum ClientAdmin {
     },
 }
 
+/// Parsed arguments for `perigee pair`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientPairArgs {
+    /// Connect target the host key is pinned for (default port 4433).
+    pub target: String,
+    pub host_key: [u8; NODE_KEY_LEN],
+    pub secret: String,
+    /// Name the host lists this machine under in `trusted_clients`.
+    pub label: String,
+    /// TCP port of the host's pairing window (default 4434).
+    pub pair_port: u16,
+    pub config_dir: Option<PathBuf>,
+}
+
 /// Top-level command parsed from `perigee` CLI arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
     Connect(ConnectArgs),
     Admin(ClientAdmin),
+    Pair(ClientPairArgs),
     Host(HostCommand),
     Help,
     Version,
@@ -109,6 +132,7 @@ pub fn parse_cli_args(args: &[String], host_base: HostOptions) -> Result<CliComm
             Ok(CliCommand::Host(cmd))
         }
         "connect" => parse_connect_args(&args[1..]),
+        "pair" => parse_pair_args(&args[1..]).map(CliCommand::Pair),
         "identity" | "trust" => parse_client_admin(args).map(CliCommand::Admin),
         other => bail!("unknown command '{other}'; run perigee --help"),
     }
@@ -259,6 +283,55 @@ fn parse_client_admin(args: &[String]) -> Result<ClientAdmin> {
     }
 }
 
+fn parse_pair_args(args: &[String]) -> Result<ClientPairArgs> {
+    let mut label = None;
+    let mut pair_port = DEFAULT_PAIRING_PORT;
+    let mut config_dir = None;
+    let mut positional: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let flag = args[i].as_str();
+        if !flag.starts_with('-') {
+            positional.push(flag);
+            i += 1;
+            continue;
+        }
+        if !matches!(flag, "--label" | "--pair-port" | "--config-dir") {
+            bail!("unknown argument '{flag}'; run perigee --help");
+        }
+        let value = match args.get(i + 1) {
+            Some(v) if !v.is_empty() => v.as_str(),
+            _ => bail!("{flag} needs a value"),
+        };
+        match flag {
+            "--label" => label = Some(value.to_string()),
+            "--pair-port" => {
+                pair_port = value
+                    .parse()
+                    .with_context(|| format!("invalid --pair-port '{value}'"))?;
+            }
+            _ => config_dir = Some(PathBuf::from(value)),
+        }
+        i += 2;
+    }
+    let [target, host_key, secret] = positional.as_slice() else {
+        bail!(
+            "usage: perigee pair <HOST[:PORT]> <HOST_KEY> <SECRET> --label NAME [--pair-port PORT] [--config-dir DIR]"
+        );
+    };
+    let Some(label) = label else {
+        bail!("perigee pair needs --label NAME: the name the host lists this machine under");
+    };
+    Ok(ClientPairArgs {
+        target: (*target).to_string(),
+        host_key: node_key_from_hex(host_key)?,
+        secret: (*secret).to_string(),
+        label,
+        pair_port,
+        config_dir,
+    })
+}
+
 /// The client config directory: `config_dir`, else [`default_config_dir`].
 pub fn client_config_dir(config_dir: &Option<PathBuf>) -> Result<PathBuf> {
     config_dir
@@ -322,12 +395,40 @@ pub fn run_client_admin(admin: &ClientAdmin) -> Result<String> {
     }
 }
 
+/// Pairs with the host's pairing window (same IP as `args.target`, port `args.pair_port`), then
+/// pins the host key for `args.target` so `perigee connect` works with no further setup.
+pub async fn run_client_pair(args: &ClientPairArgs) -> Result<String> {
+    let dir = client_config_dir(&args.config_dir)?;
+    let target = perigee_client::canonical_target(&args.target)?;
+    let quic_addr = perigee_client::resolve_host_addr(&target)?;
+    let pair_addr = SocketAddr::new(quic_addr.ip(), args.pair_port);
+    let identity = NodeIdentity::load_or_create(&dir.join(IDENTITY_FILE_NAME))?;
+    pair_with_host(
+        &identity,
+        pair_addr,
+        &args.host_key,
+        &args.secret,
+        &args.label,
+    )
+    .await?;
+    TrustedKeys::load(dir.join(KNOWN_HOSTS_FILE_NAME))?.pin(args.host_key, &target)?;
+    Ok(format!(
+        "paired with {pair_addr}: the host trusts this machine as {}; pinned {} for {target}",
+        args.label,
+        node_key_to_hex(&args.host_key)
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn s(items: &[&str]) -> Vec<String> {
         items.iter().map(|x| (*x).to_string()).collect()
+    }
+
+    fn base() -> HostOptions {
+        HostOptions::default()
     }
 
     #[test]
@@ -649,5 +750,55 @@ mod tests {
             format!("{} host.example.com:4433", node_key_to_hex(&key))
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_parse_pair_args() {
+        let key = node_key_to_hex(&[0x55; NODE_KEY_LEN]);
+        let parsed = parse_cli_args(
+            &s(&[
+                "pair",
+                "192.0.2.10",
+                key.as_str(),
+                "abc123",
+                "--label",
+                "testuser-laptop",
+                "--pair-port",
+                "5000",
+            ]),
+            base(),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            CliCommand::Pair(ClientPairArgs {
+                target: "192.0.2.10".to_string(),
+                host_key: [0x55; NODE_KEY_LEN],
+                secret: "abc123".to_string(),
+                label: "testuser-laptop".to_string(),
+                pair_port: 5000,
+                config_dir: None,
+            })
+        );
+        assert!(
+            parse_cli_args(&s(&["pair", "192.0.2.10", key.as_str(), "abc123"]), base()).is_err()
+        );
+        assert!(parse_cli_args(&s(&["pair", "192.0.2.10", key.as_str()]), base()).is_err());
+        assert!(
+            parse_cli_args(
+                &s(&[
+                    "pair",
+                    "192.0.2.10",
+                    key.as_str(),
+                    "abc123",
+                    "--label",
+                    "x",
+                    "--bogus",
+                    "1"
+                ]),
+                base()
+            )
+            .is_err()
+        );
     }
 }
