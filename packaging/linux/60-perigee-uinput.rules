@@ -1,2 +1,5 @@
 # Let the perigee service account create virtual input devices.
-KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="perigee", MODE="0660", OPTIONS+="static_node=uinput"
+# COSMIC/Pop tag uinput with uaccess, so the node carries a logind ACL; on a node with an ACL,
+# MODE only sets the ACL mask and the owning group stays at ---. A named ACL entry is what
+# actually grants the perigee group access.
+KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="perigee", MODE="0660", OPTIONS+="static_node=uinput", RUN+="/usr/bin/setfacl -m g:perigee:rw /dev/uinput"

@@ -122,6 +122,7 @@ systemd-sysusers perigee.conf || true
 modprobe uinput || true
 udevadm control --reload || true
 udevadm trigger --name-match=uinput || true
+setfacl -m g:perigee:rw /dev/uinput 2>/dev/null || true
 POSTINST
     chmod 0755 "${DEB_ROOT}/DEBIAN/postinst"
     install -m 0644 "README.md" "${DEB_ROOT}/usr/share/doc/perigee/README.md"
@@ -136,7 +137,7 @@ Section: net
 Priority: optional
 Architecture: ${DEB_ARCH}
 Installed-Size: ${INSTALLED_KB}
-Depends: libc6, libwayland-client0, libdrm2, libgbm1, libxkbcommon0, libdbus-1-3
+Depends: libc6, libwayland-client0, libdrm2, libgbm1, libxkbcommon0, libdbus-1-3, acl
 Maintainer: TheInfoMoose <https://github.com/TheInfoMoose/Perigee>
 Homepage: https://github.com/TheInfoMoose/Perigee
 Description: Zero-copy QUIC remote display viewer and host daemon for COSMIC
@@ -210,6 +211,7 @@ systemd-sysusers perigee.conf || :
 modprobe uinput || :
 udevadm control --reload || :
 udevadm trigger --name-match=uinput || :
+setfacl -m g:perigee:rw /dev/uinput 2>/dev/null || :
 
 %files
 /usr/bin/perigee-ui
