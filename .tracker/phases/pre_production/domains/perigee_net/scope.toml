@@ -17,14 +17,14 @@ tracked_files = [
 [[items.bugs]]
 id = "BUG-0006"
 title = "Write identity.key atomically and zeroize the DER read buffer"
-status = "open"
+status = "closed"
 severity = "low"
 created_at = "2026-11-20T23:07:03Z"
 
 [[items.bugs]]
 id = "BUG-0007"
 title = "Use a unique temp file and close it before rename in TrustedKeys::save"
-status = "open"
+status = "closed"
 severity = "low"
 created_at = "2026-11-20T23:07:03Z"
 
@@ -73,7 +73,7 @@ created_at = "2026-11-20T02:43:56Z"
 [[items.tasks]]
 id = "TASK-0071"
 title = "Private files written atomically via write_private_file; identity DER zeroized (BUG-0006, BUG-0007)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-21T02:07:53Z"
 
