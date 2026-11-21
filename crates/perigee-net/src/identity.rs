@@ -94,6 +94,28 @@ impl NodeIdentity {
         node_key_to_hex(&self.public_key)
     }
 
+    /// The 32-byte Ed25519 seed inside this node's PKCS#8 key, for building the same key in
+    /// another format (the SSH key used for pairing). Zeroized on drop.
+    pub(crate) fn ed25519_seed(&self) -> Result<Zeroizing<[u8; 32]>> {
+        // OneAsymmetricKey v1 (`30 2e 02 01 00 ..`) and v2 (`30 53 02 01 01 ..`) both put the
+        // seed at bytes 16..48, after `30 05 06 03 2b 65 70 04 22 04 20`.
+        const SEED_PREFIX: [u8; 11] = [
+            0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+        ];
+        let der = &self.pkcs8_der;
+        if der.len() < 48
+            || der[0] != 0x30
+            || der[2..4] != [0x02, 0x01]
+            || der[4] > 0x01
+            || der[5..16] != SEED_PREFIX
+        {
+            bail!("node identity is not an Ed25519 PKCS#8 key");
+        }
+        let mut seed = Zeroizing::new([0u8; 32]);
+        seed.copy_from_slice(&der[16..48]);
+        Ok(seed)
+    }
+
     /// A self-signed certificate for [`PERIGEE_SERVER_NAME`] carrying this node's key, plus the
     /// matching private key, ready for rustls.
     pub fn tls_certificate(&self) -> Result<(CertificateDer<'static>, PrivateKeyDer<'static>)> {

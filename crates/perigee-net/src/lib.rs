@@ -10,6 +10,7 @@ mod fsutil;
 pub mod identity;
 pub mod manager;
 pub mod metrics;
+pub mod pairing;
 pub mod socket;
 pub mod trust;
 
@@ -17,6 +18,7 @@ pub use endpoint::*;
 pub use identity::*;
 pub use manager::*;
 pub use metrics::*;
+pub use pairing::*;
 pub use socket::*;
 pub use trust::*;
 
