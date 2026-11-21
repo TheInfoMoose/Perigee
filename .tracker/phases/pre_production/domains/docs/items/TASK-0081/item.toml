@@ -4,11 +4,11 @@ schema_version = 2
 id = "TASK-0081"
 type = "task"
 title = "Fix stale README host note and run-examples placement"
-status = "open"
+status = "closed"
 severity = "low"
 scope_ref = "docs"
 created_at = "2026-11-21T06:14:44Z"
-updated_at = "2026-11-21T06:41:32Z"
+updated_at = "2026-11-21T18:08:13Z"
 
 [effort]
 logged_time_minutes = 0
@@ -16,4 +16,8 @@ iteration_count = 1
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-21"
+commit = "bdd4940"
+summary = "README rate-limit note fixed and run-examples block moved above trust setup (STEP 5B)"

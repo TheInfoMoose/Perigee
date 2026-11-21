@@ -4,11 +4,11 @@ schema_version = 2
 id = "TASK-0039"
 type = "task"
 title = "Decide fate of NistVault session-token store after Phase 4"
-status = "open"
+status = "closed"
 severity = "low"
 scope_ref = "perigee_common"
 created_at = "2026-11-20T02:41:43Z"
-updated_at = "2026-11-21T06:41:32Z"
+updated_at = "2026-11-21T18:08:13Z"
 
 [effort]
 logged_time_minutes = 0
@@ -16,4 +16,8 @@ iteration_count = 1
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-21"
+commit = "e6e909a"
+summary = "Deleted the unused NistVault token store, VaultTokenModel and the simply-transfer-crypto dependency (STEP 5C)"
