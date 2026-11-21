@@ -190,7 +190,7 @@ created_at = "2026-11-21T18:08:13Z"
 [[items.tasks]]
 id = "TASK-0102"
 title = "Report the full error chain when a host session is refused"
-status = "pending"
+status = "closed"
 severity = "low"
 created_at = "2026-11-21T20:22:41Z"
 
@@ -232,6 +232,6 @@ created_at = "2026-11-21T20:59:58Z"
 [[items.tasks]]
 id = "TASK-0111"
 title = "capture-worker fits frames to the 4 MiB wire budget (TASK-0103 partial)"
-status = "open"
+status = "pending"
 severity = "medium"
 created_at = "2026-11-21T20:59:58Z"

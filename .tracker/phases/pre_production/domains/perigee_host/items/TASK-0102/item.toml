@@ -4,11 +4,11 @@ schema_version = 2
 id = "TASK-0102"
 type = "task"
 title = "Report the full error chain when a host session is refused"
-status = "pending"
+status = "closed"
 severity = "low"
 scope_ref = "perigee_host"
 created_at = "2026-11-21T20:22:41Z"
-updated_at = "2026-11-21T20:22:41Z"
+updated_at = "2026-11-21T21:22:30Z"
 
 [effort]
 logged_time_minutes = 0
@@ -16,4 +16,8 @@ iteration_count = 1
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-21"
+commit = "ba969f3"
+summary = "AuthResponse refusals and the serve warning now carry the full anyhow chain (STEP 5BD)"

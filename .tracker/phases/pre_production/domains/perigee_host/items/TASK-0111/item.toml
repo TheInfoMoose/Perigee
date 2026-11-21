@@ -4,11 +4,11 @@ schema_version = 2
 id = "TASK-0111"
 type = "task"
 title = "capture-worker fits frames to the 4 MiB wire budget (TASK-0103 partial)"
-status = "open"
+status = "pending"
 severity = "medium"
 scope_ref = "perigee_host"
 created_at = "2026-11-21T20:59:58Z"
-updated_at = "2026-11-21T20:59:58Z"
+updated_at = "2026-11-21T21:27:51Z"
 source_ref = "STEP 5BH"
 
 [effort]
