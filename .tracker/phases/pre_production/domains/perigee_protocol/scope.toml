@@ -27,3 +27,10 @@ title = "Remove requires_elevation, legacy-transport log text and HostCredential
 status = "open"
 severity = "low"
 created_at = "2026-11-20T23:07:03Z"
+
+[[items.tasks]]
+id = "TASK-0069"
+title = "Delete requires_elevation, legacy-transport log text, HostCredentials, HostOptions::from_env (TASK-0066, TASK-0058)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-21T02:07:53Z"

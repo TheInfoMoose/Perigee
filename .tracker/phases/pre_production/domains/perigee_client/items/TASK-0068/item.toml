@@ -1,0 +1,20 @@
+schema_version = 2
+
+[item]
+id = "TASK-0068"
+type = "task"
+title = "Client logs clipboard kind + byte count at debug, not the payload (BUG-0008)"
+status = "open"
+severity = "medium"
+scope_ref = "perigee_client"
+created_at = "2026-11-21T02:07:53Z"
+updated_at = "2026-11-21T02:07:58Z"
+source_ref = "STEP 4BA"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+previous_fixes = []

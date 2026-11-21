@@ -88,3 +88,10 @@ title = "perigee-host identity / trust add|list|remove"
 status = "closed"
 severity = "medium"
 created_at = "2026-11-20T11:17:08Z"
+
+[[items.tasks]]
+id = "TASK-0077"
+title = "perigee-host pair / perigee host pair (FEAT-0001)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-21T02:07:53Z"

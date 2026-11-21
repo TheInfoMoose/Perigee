@@ -1,0 +1,20 @@
+schema_version = 2
+
+[item]
+id = "TASK-0080"
+type = "task"
+title = "Research report: headless capture + greeter seat following (TASK-0002)"
+status = "open"
+severity = "medium"
+scope_ref = "docs"
+created_at = "2026-11-21T02:07:54Z"
+updated_at = "2026-11-21T02:07:58Z"
+source_ref = "STEP 4BM"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+previous_fixes = []

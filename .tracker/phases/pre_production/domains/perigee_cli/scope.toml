@@ -42,3 +42,17 @@ title = "perigee connect pins host key; client identity / trust; load_client_aut
 status = "closed"
 severity = "medium"
 created_at = "2026-11-20T11:17:08Z"
+
+[[items.tasks]]
+id = "TASK-0070"
+title = "perigee connect prints the host node key (TASK-0040)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-21T02:07:53Z"
+
+[[items.tasks]]
+id = "TASK-0078"
+title = "perigee pair; pair-then-connect loopback test (FEAT-0001)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-21T02:07:54Z"
