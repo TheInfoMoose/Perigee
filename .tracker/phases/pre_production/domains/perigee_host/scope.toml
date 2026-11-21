@@ -155,7 +155,7 @@ created_at = "2026-11-21T14:26:51Z"
 [[items.tasks]]
 id = "TASK-0094"
 title = "WorkerCapturer: worker as session uid/gid, follows seat0"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-21T14:26:51Z"
 
