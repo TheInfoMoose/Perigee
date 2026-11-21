@@ -211,7 +211,7 @@ created_at = "2026-11-21T20:59:58Z"
 [[items.tasks]]
 id = "TASK-0107"
 title = "Full error chain in refusals and serve warnings (TASK-0102)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-21T20:59:58Z"
 
