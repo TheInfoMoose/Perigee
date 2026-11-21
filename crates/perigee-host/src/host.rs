@@ -15,6 +15,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
 
+/// Largest raw frame payload a capture worker sends to its parent.
+#[cfg(target_os = "linux")]
+const WORKER_FRAME_MAX_BYTES: usize = 8 * 1024 * 1024;
+/// Pause between capture-worker frames (10 fps).
+#[cfg(target_os = "linux")]
+const WORKER_FRAME_INTERVAL: Duration = Duration::from_millis(100);
+
 /// Default UDP socket bind address for `perigee-host` (loopback-only).
 pub const DEFAULT_BIND_ADDR: &str = "127.0.0.1:4433";
 
@@ -158,6 +165,9 @@ pub enum HostTool {
     Snapshot { out: PathBuf, output: usize },
     /// Create the uinput devices, move the pointer to the centre, click, and type `perigee`.
     InputTest,
+    /// Internal (started by `--media follow-seat`): capture output `output` of the compositor
+    /// in `XDG_RUNTIME_DIR` and stream raw frames on stdout.
+    CaptureWorker { output: usize },
 }
 
 /// Parsed arguments for `perigee-host pair`.
@@ -176,6 +186,9 @@ pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand
         Some("snapshot") => return parse_snapshot_args(&args[1..]).map(HostCommand::Tool),
         Some("input-test") if args.len() == 1 => return Ok(HostCommand::Tool(HostTool::InputTest)),
         Some("input-test") => bail!("input-test takes no arguments"),
+        Some("capture-worker") => {
+            return parse_capture_worker_args(&args[1..]).map(HostCommand::Tool);
+        }
         _ => {}
     }
     if args.first().map(String::as_str) == Some("pair") {
@@ -356,6 +369,18 @@ fn parse_snapshot_args(args: &[String]) -> Result<HostTool> {
     Ok(HostTool::Snapshot { out, output })
 }
 
+fn parse_capture_worker_args(args: &[String]) -> Result<HostTool> {
+    match args {
+        [] => Ok(HostTool::CaptureWorker { output: 0 }),
+        [flag, value] if flag == "--output" => Ok(HostTool::CaptureWorker {
+            output: value
+                .parse()
+                .with_context(|| format!("invalid --output '{value}': expected an output index"))?,
+        }),
+        _ => bail!("usage: perigee-host capture-worker [--output <INDEX>]"),
+    }
+}
+
 /// Runs a key-management subcommand and returns the text to print.
 pub fn run_host_admin(admin: &HostAdmin) -> Result<String> {
     let dir = |config_dir: &Option<PathBuf>| {
@@ -501,6 +526,46 @@ pub fn run_host_tool(tool: &HostTool) -> Result<String> {
                 }
                 std::thread::sleep(Duration::from_millis(200));
                 Ok("moved the pointer to the centre, clicked, and typed \"perigee\"".to_string())
+            }
+            HostTool::CaptureWorker { output } => {
+                use std::io::Write;
+
+                let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
+                    .map(PathBuf::from)
+                    .context("capture-worker needs XDG_RUNTIME_DIR")?;
+                let socket = crate::seat::find_wayland_socket(&runtime_dir)?;
+                let mut capturer = crate::backends::WaylandShmCapturer::connect(
+                    Some(&socket),
+                    &runtime_dir,
+                    *output,
+                )?;
+                let mut stdout = std::io::stdout().lock();
+                loop {
+                    let frame = capturer.capture_next_frame()?;
+                    let fitted = crate::fit_raw_frame(&frame, WORKER_FRAME_MAX_BYTES)?;
+                    let message =
+                        perigee_protocol::WireMessage::Video(perigee_protocol::VideoFrameMessage {
+                            frame_id: fitted.frame_index,
+                            monitor_id: fitted.display_id,
+                            timestamp_us: fitted.timestamp_us,
+                            codec: perigee_protocol::VideoCodec::RawBgra,
+                            is_keyframe: true,
+                            width: fitted.width,
+                            height: fitted.height,
+                            stride: fitted.stride,
+                            format: fitted.pixel_format,
+                            payload: fitted.data,
+                        });
+                    let framed = perigee_protocol::encode_length_prefixed(&message)?;
+                    if stdout
+                        .write_all(&framed)
+                        .and_then(|()| stdout.flush())
+                        .is_err()
+                    {
+                        return Ok("capture-worker: the reader closed the pipe".to_string());
+                    }
+                    std::thread::sleep(WORKER_FRAME_INTERVAL);
+                }
             }
         }
     }
@@ -1212,5 +1277,26 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
         assert!(parse_host_args(&extra, HostOptions::default()).is_err());
+    }
+
+    #[test]
+    fn test_parse_capture_worker() {
+        assert_eq!(
+            parse_host_args(&["capture-worker".to_string()], HostOptions::default()).unwrap(),
+            HostCommand::Tool(HostTool::CaptureWorker { output: 0 })
+        );
+        let two: Vec<String> = ["capture-worker", "--output", "2"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            parse_host_args(&two, HostOptions::default()).unwrap(),
+            HostCommand::Tool(HostTool::CaptureWorker { output: 2 })
+        );
+        let bad: Vec<String> = ["capture-worker", "--bogus"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(parse_host_args(&bad, HostOptions::default()).is_err());
     }
 }
