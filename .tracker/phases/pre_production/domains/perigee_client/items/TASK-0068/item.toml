@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0068"
 type = "task"
 title = "Client logs clipboard kind + byte count at debug, not the payload (BUG-0008)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "perigee_client"
 created_at = "2026-11-21T02:07:53Z"
-updated_at = "2026-11-21T02:07:58Z"
+updated_at = "2026-11-21T02:19:35Z"
 source_ref = "STEP 4BA"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 10
 iteration_count = 1
+last_timer_session = "TASK-0068@2026-11-21T02:09:30Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-21"
+commit = "5df9c3f"
+summary = "STEP 4BA validated: clipboard messages logged as kind + byte count at debug"

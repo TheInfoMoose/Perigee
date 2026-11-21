@@ -2,11 +2,11 @@
 id = "BUG-0008"
 type = "bug"
 title = "Stop logging clipboard payloads at INFO in the client"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "perigee_client"
 created_at = "2026-11-20T23:07:03Z"
-updated_at = "2026-11-21T00:52:58Z"
+updated_at = "2026-11-21T02:19:35Z"
 
 [effort]
 logged_time_minutes = 0
@@ -14,4 +14,8 @@ iteration_count = 1
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-21"
+commit = "5df9c3f"
+summary = "Fixed by STEP 4BA: client no longer logs clipboard payloads at INFO"
