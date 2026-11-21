@@ -57,8 +57,9 @@ Options:
   --name <NODE>         Host node identifier (default: perigee-host-node)
   --config-dir <DIR>    Directory holding identity.key and trusted_clients
                         (default: PERIGEE_CONFIG_DIR, else ~/.config/perigee)
-  --media <MODE>        standin (default; synthetic frames, logged input) or live (Linux:
-                        capture this Wayland session, inject input via /dev/uinput)
+  --media <MODE>        standin (default; synthetic frames, logged input), live (Linux:
+                        capture this Wayland session, inject input via /dev/uinput), or
+                        follow-seat (Linux service: follow seat0's active session, greeter included)
   -h, --help            Print this help text and exit
   -V, --version         Print version information and exit
 
@@ -248,13 +249,16 @@ pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand
                 i += 2;
             }
             "--media" => {
-                let val = slice
-                    .get(i + 1)
-                    .ok_or_else(|| anyhow!("--media needs a value: standin or live"))?;
+                let val = slice.get(i + 1).ok_or_else(|| {
+                    anyhow!("--media needs a value: standin, live or follow-seat")
+                })?;
                 opts.media = match val.as_str() {
                     "standin" => MediaMode::StandIn,
                     "live" => MediaMode::Live,
-                    other => bail!("unknown --media '{other}': expected standin or live"),
+                    "follow-seat" => MediaMode::FollowSeat,
+                    other => {
+                        bail!("unknown --media '{other}': expected standin, live or follow-seat")
+                    }
                 };
                 i += 2;
             }
@@ -1244,6 +1248,17 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect();
+        let follow: Vec<String> = ["--media", "follow-seat"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            parse_host_args(&follow, HostOptions::default()).unwrap(),
+            HostCommand::Run(HostOptions {
+                media: MediaMode::FollowSeat,
+                ..HostOptions::default()
+            })
+        );
         assert!(parse_host_args(&bad, HostOptions::default()).is_err());
     }
 

@@ -100,6 +100,10 @@ pub enum MediaMode {
     /// (`ext-image-copy-capture-v1`, output 0), inject input through `/dev/uinput`, and send
     /// raw frames at [`daemon::LIVE_RAW_FPS`].
     Live,
+    /// Linux only: follow logind's active session on seat0 (greeter → user → greeter) through a
+    /// `capture-worker` running as that session's user; input through `/dev/uinput`. For the
+    /// packaged service.
+    FollowSeat,
 }
 
 /// Raw Frame Buffer captured from Host GPU / Display Subsystem

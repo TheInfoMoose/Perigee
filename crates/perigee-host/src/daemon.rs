@@ -99,7 +99,7 @@ impl HostSessionEngine {
     ) -> Result<Self> {
         let fps = match media {
             MediaMode::StandIn => encoder_config.target_fps,
-            MediaMode::Live => LIVE_RAW_FPS,
+            MediaMode::Live | MediaMode::FollowSeat => LIVE_RAW_FPS,
         };
         let frame_interval = Duration::from_nanos(1_000_000_000 / u64::from(fps.max(1)));
         let (capturer, encoder, input_injector, screen_sink) = match media {
@@ -119,6 +119,7 @@ impl HostSessionEngine {
                 (capturer, encoder, injector, None)
             }
             MediaMode::Live => Self::build_live_media(encoder_config)?,
+            MediaMode::FollowSeat => Self::build_follow_seat_media(encoder_config)?,
         };
         let (stop_tx, _) = watch::channel(false);
 
@@ -165,6 +166,31 @@ impl HostSessionEngine {
     #[cfg(not(target_os = "linux"))]
     fn build_live_media(_encoder_config: EncoderConfig) -> Result<SessionMedia> {
         anyhow::bail!("live media is only implemented on Linux")
+    }
+
+    /// Linux follow-seat media: a capture worker per active seat0 session, raw frames, uinput.
+    #[cfg(target_os = "linux")]
+    fn build_follow_seat_media(encoder_config: EncoderConfig) -> Result<SessionMedia> {
+        let command = crate::backends::WorkerCommand::current()?;
+        let capturer: Box<dyn FrameCapturer> =
+            Box::new(crate::backends::WorkerCapturer::new(command, 0));
+        let uinput = Arc::new(
+            crate::backends::UinputInjector::new(1920, 1080)
+                .context("failed to create the /dev/uinput devices")?,
+        );
+        let sink_target = uinput.clone();
+        let screen_sink: ScreenSink = Arc::new(move |width, height| {
+            sink_target.set_screen_size(width, height);
+        });
+        let encoder: Box<dyn VideoEncoder> =
+            Box::new(crate::encoder::RawVideoEncoder::new(encoder_config));
+        let injector: Arc<dyn HostInputInjector> = uinput;
+        Ok((capturer, encoder, injector, Some(screen_sink)))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn build_follow_seat_media(_encoder_config: EncoderConfig) -> Result<SessionMedia> {
+        anyhow::bail!("follow-seat media is only implemented on Linux")
     }
 
     /// Returns `true` if the session capture engine is currently active.
