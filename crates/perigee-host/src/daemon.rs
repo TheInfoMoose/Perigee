@@ -33,12 +33,16 @@ pub const LIVE_RAW_FPS: u32 = 10;
 /// Called with the size of each frame sent to the client, so pixel-space input can be scaled.
 type ScreenSink = Arc<dyn Fn(u32, u32) + Send + Sync>;
 
-/// A session's capturer, encoder, input injector and optional screen-size sink.
+/// Called when a session stops, to end a capture source the capture thread may be blocked on.
+type CaptureStop = Arc<dyn Fn() + Send + Sync>;
+
+/// A session's capturer, encoder, input injector, optional screen-size sink and optional capture stop.
 type SessionMedia = (
     Box<dyn FrameCapturer>,
     Box<dyn VideoEncoder>,
     Arc<dyn HostInputInjector>,
     Option<ScreenSink>,
+    Option<CaptureStop>,
 );
 
 /// Active Session Controller on Host Daemon
@@ -56,6 +60,7 @@ pub struct HostSessionEngine {
     stop_tx: Arc<watch::Sender<bool>>,
     frame_interval: Duration,
     screen_sink: Option<ScreenSink>,
+    capture_stop: Option<CaptureStop>,
 }
 
 impl HostSessionEngine {
@@ -102,7 +107,7 @@ impl HostSessionEngine {
             MediaMode::Live | MediaMode::FollowSeat => LIVE_RAW_FPS,
         };
         let frame_interval = Duration::from_nanos(1_000_000_000 / u64::from(fps.max(1)));
-        let (capturer, encoder, input_injector, screen_sink) = match media {
+        let (capturer, encoder, input_injector, screen_sink, capture_stop) = match media {
             MediaMode::StandIn => {
                 let width = encoder_config.width.max(1);
                 let height = encoder_config.height.max(1);
@@ -116,7 +121,7 @@ impl HostSessionEngine {
                 };
                 let injector: Arc<dyn HostInputInjector> =
                     Arc::new(NativeInputInjector::new(backend_type));
-                (capturer, encoder, injector, None)
+                (capturer, encoder, injector, None, None)
             }
             MediaMode::Live => Self::build_live_media(encoder_config)?,
             MediaMode::FollowSeat => Self::build_follow_seat_media(encoder_config)?,
@@ -137,6 +142,7 @@ impl HostSessionEngine {
             stop_tx: Arc::new(stop_tx),
             frame_interval,
             screen_sink,
+            capture_stop,
         })
     }
 
@@ -160,7 +166,7 @@ impl HostSessionEngine {
         let encoder: Box<dyn VideoEncoder> =
             Box::new(crate::encoder::RawVideoEncoder::new(encoder_config));
         let injector: Arc<dyn HostInputInjector> = uinput;
-        Ok((capturer, encoder, injector, Some(screen_sink)))
+        Ok((capturer, encoder, injector, Some(screen_sink), None))
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -172,8 +178,10 @@ impl HostSessionEngine {
     #[cfg(target_os = "linux")]
     fn build_follow_seat_media(encoder_config: EncoderConfig) -> Result<SessionMedia> {
         let command = crate::backends::WorkerCommand::current()?;
-        let capturer: Box<dyn FrameCapturer> =
-            Box::new(crate::backends::WorkerCapturer::new(command, 0));
+        let worker = crate::backends::WorkerCapturer::new(command, 0);
+        let stopper = worker.stopper();
+        let capture_stop: CaptureStop = Arc::new(move || stopper.stop());
+        let capturer: Box<dyn FrameCapturer> = Box::new(worker);
         let uinput = Arc::new(
             crate::backends::UinputInjector::new(1920, 1080)
                 .context("failed to create the /dev/uinput devices")?,
@@ -185,7 +193,13 @@ impl HostSessionEngine {
         let encoder: Box<dyn VideoEncoder> =
             Box::new(crate::encoder::RawVideoEncoder::new(encoder_config));
         let injector: Arc<dyn HostInputInjector> = uinput;
-        Ok((capturer, encoder, injector, Some(screen_sink)))
+        Ok((
+            capturer,
+            encoder,
+            injector,
+            Some(screen_sink),
+            Some(capture_stop),
+        ))
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -229,27 +243,46 @@ impl HostSessionEngine {
             while is_active.load(Ordering::Relaxed) && !*stop_rx.borrow() {
                 let loop_start = Instant::now();
 
-                let captured_frame = {
-                    let mut cap_lock = capturer.lock().await;
-                    match cap_lock.capture_next_frame() {
-                        Ok(frame) => frame,
+                let capture_task = {
+                    let capturer = capturer.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let started = Instant::now();
+                        let frame = capturer.blocking_lock().capture_next_frame();
+                        (frame, started.elapsed())
+                    })
+                };
+                let (captured, capture_time) = tokio::select! {
+                    joined = capture_task => match joined {
+                        Ok(result) => result,
                         Err(e) => {
-                            error!(
-                                session_id = %session_id,
-                                error = %e,
-                                "Platform FrameCapturer capture_next_frame failed; stopping session"
-                            );
+                            error!(session_id = %session_id, error = %e, "Capture thread failed; stopping session");
                             is_active.store(false, Ordering::SeqCst);
                             let _ = stop_tx.send(true);
                             break;
                         }
+                    },
+                    _ = stop_rx.changed() => break,
+                };
+                let captured_frame = match captured {
+                    Ok(frame) => frame,
+                    Err(e) => {
+                        error!(
+                            session_id = %session_id,
+                            error = %format!("{e:#}"),
+                            "Platform FrameCapturer capture_next_frame failed; stopping session"
+                        );
+                        is_active.store(false, Ordering::SeqCst);
+                        let _ = stop_tx.send(true);
+                        break;
                     }
                 };
 
                 let need_keyframe = force_keyframe.swap(false, Ordering::SeqCst);
 
-                let mut enc_lock = encoder.lock().await;
-                match enc_lock.encode(&captured_frame, need_keyframe) {
+                let encode_started = Instant::now();
+                let encoded = encoder.lock().await.encode(&captured_frame, need_keyframe);
+                let encode_time = encode_started.elapsed();
+                match encoded {
                     Ok(video_msg) => {
                         if let Some(sink) = &screen_sink
                             && (video_msg.width, video_msg.height) != sent_size
@@ -257,16 +290,30 @@ impl HostSessionEngine {
                             sent_size = (video_msg.width, video_msg.height);
                             sink(sent_size.0, sent_size.1);
                         }
-                        if video_tx.send(WireMessage::Video(video_msg)).await.is_err() {
-                            error!("Outgoing transport channel closed; exiting capture loop");
-                            break;
+                        let payload_bytes = video_msg.payload.len();
+                        let send_started = Instant::now();
+                        tokio::select! {
+                            sent = video_tx.send(WireMessage::Video(video_msg)) => {
+                                if sent.is_err() {
+                                    error!("Outgoing transport channel closed; exiting capture loop");
+                                    break;
+                                }
+                            }
+                            _ = stop_rx.changed() => break,
                         }
+                        debug!(
+                            session_id = %session_id,
+                            capture_ms = capture_time.as_millis() as u64,
+                            encode_ms = encode_time.as_millis() as u64,
+                            send_ms = send_started.elapsed().as_millis() as u64,
+                            payload_bytes,
+                            "Frame timing"
+                        );
                     }
                     Err(e) => {
                         error!(error = %e, "Video frame encoding failed");
                     }
                 }
-                drop(enc_lock);
 
                 let elapsed = loop_start.elapsed();
                 if elapsed < target_frame_duration {
@@ -349,6 +396,9 @@ impl HostSessionEngine {
     pub fn stop(&self) {
         self.is_active.store(false, Ordering::SeqCst);
         let _ = self.stop_tx.send(true);
+        if let Some(capture_stop) = &self.capture_stop {
+            capture_stop();
+        }
         self.audio_capturer.stop();
         info!(session_id = %self.session_id, "Host session stopped");
     }
@@ -1443,5 +1493,56 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), client_conn.connection.closed())
             .await
             .expect("host did not close the connection");
+    }
+
+    struct BlockingCapturer {
+        release: Arc<AtomicBool>,
+    }
+
+    impl FrameCapturer for BlockingCapturer {
+        fn backend_type(&self) -> CaptureBackendType {
+            CaptureBackendType::WaylandPipeWire
+        }
+
+        fn is_live_display(&self) -> bool {
+            true
+        }
+
+        fn enumerate_monitors(&self) -> Result<Vec<MonitorInfo>> {
+            Ok(Vec::new())
+        }
+
+        fn capture_next_frame(&mut self) -> Result<CapturedFrame> {
+            while !self.release.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            anyhow::bail!("released")
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stop_ends_capture_loop_blocked_in_capture() {
+        let session = HostSessionEngine::new(
+            "blocked-capture".to_string(),
+            CaptureBackendType::WaylandPipeWire,
+            EncoderConfig::default(),
+        )
+        .unwrap();
+        let release = Arc::new(AtomicBool::new(false));
+        *session.capturer.lock().await = Box::new(BlockingCapturer {
+            release: release.clone(),
+        });
+        let (tx, mut rx) = mpsc::channel(4);
+        session.run_capture_loop(tx).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        session.stop();
+        // The loop must not wait for the blocked capture: stop() alone ends the session.
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while rx.recv().await.is_some() {}
+        })
+        .await
+        .ok();
+        assert!(!session.is_running());
+        release.store(true, Ordering::SeqCst);
     }
 }
