@@ -54,7 +54,10 @@ pub mod daemon;
 pub use daemon::{CLIENT_HELLO_TIMEOUT, HostSessionEngine, PerigeeHostDaemon};
 
 pub mod encoder;
-pub use encoder::{EncoderConfig, MacOsVideoToolboxEncoder, SoftwareVideoEncoder, VideoEncoder};
+pub use encoder::{
+    EncoderConfig, MacOsVideoToolboxEncoder, RAW_FRAME_MAX_BYTES, RawVideoEncoder,
+    SoftwareVideoEncoder, VideoEncoder, fit_raw_frame,
+};
 
 pub mod ppm;
 pub use ppm::encode_ppm;
