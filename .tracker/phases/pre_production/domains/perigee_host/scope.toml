@@ -225,7 +225,7 @@ created_at = "2026-11-21T20:59:58Z"
 [[items.tasks]]
 id = "TASK-0110"
 title = "Capture on a blocking thread, stop-aware sends, worker stop, frame timing (BUG-0013, TASK-0099, TASK-0103)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-21T20:59:58Z"
 
