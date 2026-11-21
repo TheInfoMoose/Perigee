@@ -7,15 +7,13 @@
 //! accident.
 
 use std::fmt;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use anyhow::{Context, Result, bail};
 
+use crate::fsutil::write_private_file;
 use crate::identity::{NODE_KEY_LEN, node_key_from_hex, node_key_to_hex};
 
 /// File name of a host's trusted-client list inside the Perigee config directory.
@@ -155,12 +153,6 @@ impl TrustedKeys {
     }
 
     fn save(&self, entries: &[TrustedKey]) -> Result<()> {
-        if let Some(parent) = self.path.parent()
-            && !parent.as_os_str().is_empty()
-        {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
         let mut text = String::from("# Perigee trusted node keys: <64 hex chars> <label>\n");
         for entry in entries {
             text.push_str(&node_key_to_hex(&entry.key));
@@ -168,22 +160,7 @@ impl TrustedKeys {
             text.push_str(&entry.label);
             text.push('\n');
         }
-        let tmp = self.path.with_extension("tmp");
-        let _ = fs::remove_file(&tmp);
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        options.mode(0o600);
-        let mut file = options
-            .open(&tmp)
-            .with_context(|| format!("failed to create {}", tmp.display()))?;
-        file.write_all(text.as_bytes())
-            .with_context(|| format!("failed to write {}", tmp.display()))?;
-        file.sync_all()
-            .with_context(|| format!("failed to sync {}", tmp.display()))?;
-        fs::rename(&tmp, &self.path)
-            .with_context(|| format!("failed to replace {}", self.path.display()))?;
-        Ok(())
+        write_private_file(&self.path, text.as_bytes(), true)
     }
 }
 

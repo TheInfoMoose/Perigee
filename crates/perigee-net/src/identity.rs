@@ -5,16 +5,15 @@
 //! with it, so completing the TLS 1.3 handshake proves possession of the pinned key.
 
 use std::fmt;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use rcgen::{CertificateParams, KeyPair, PKCS_ED25519};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
+
+use crate::fsutil::write_private_file;
 
 /// Length of an Ed25519 public key (a node key) in bytes.
 pub const NODE_KEY_LEN: usize = 32;
@@ -67,30 +66,22 @@ impl NodeIdentity {
     /// 0600 on Unix) when the file does not exist.
     pub fn load_or_create(path: &Path) -> Result<Self> {
         if path.exists() {
-            let der = fs::read(path)
-                .with_context(|| format!("failed to read node identity {}", path.display()))?;
+            let der = Zeroizing::new(
+                fs::read(path)
+                    .with_context(|| format!("failed to read node identity {}", path.display()))?,
+            );
             return Self::from_pkcs8_der(&der)
                 .with_context(|| format!("invalid node identity {}", path.display()));
         }
         let identity = Self::generate()?;
-        if let Some(parent) = path.parent()
-            && !parent.as_os_str().is_empty()
-        {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
+        match write_private_file(path, &identity.pkcs8_der, false) {
+            Ok(()) => Ok(identity),
+            // Another process created the key first: use the one on disk.
+            Err(_) if path.exists() => Self::load_or_create(path),
+            Err(e) => {
+                Err(e).with_context(|| format!("failed to create node identity {}", path.display()))
+            }
         }
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        options.mode(0o600);
-        let mut file = options
-            .open(path)
-            .with_context(|| format!("failed to create node identity {}", path.display()))?;
-        file.write_all(&identity.pkcs8_der)
-            .with_context(|| format!("failed to write node identity {}", path.display()))?;
-        file.sync_all()
-            .with_context(|| format!("failed to sync node identity {}", path.display()))?;
-        Ok(identity)
     }
 
     /// The node's 32-byte Ed25519 public key.
