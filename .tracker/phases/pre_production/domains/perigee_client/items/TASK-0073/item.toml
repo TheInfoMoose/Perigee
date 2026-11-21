@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0073"
 type = "task"
 title = "send_uni_message_acked; disconnect waits for delivery, no 20 ms sleep (BUG-0001)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "perigee_client"
 created_at = "2026-11-21T02:07:53Z"
-updated_at = "2026-11-21T02:07:58Z"
+updated_at = "2026-11-21T03:14:45Z"
 source_ref = "STEP 4BF"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 13
 iteration_count = 1
+last_timer_session = "TASK-0073@2026-11-21T03:00:53Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-21"
+commit = "d59a12d"
+summary = "STEP 4BF validated: send_uni_message_acked; disconnect uses it"
