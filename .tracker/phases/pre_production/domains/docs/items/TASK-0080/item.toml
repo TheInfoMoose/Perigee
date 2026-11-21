@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0080"
 type = "task"
 title = "Research report: headless capture + greeter seat following (TASK-0002)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "docs"
 created_at = "2026-11-21T02:07:54Z"
-updated_at = "2026-11-21T02:07:58Z"
+updated_at = "2026-11-21T06:34:21Z"
 source_ref = "STEP 4BM"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 19
 iteration_count = 1
+last_timer_session = "TASK-0080@2026-11-21T06:15:13Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-21"
+commit = "db24878"
+summary = "docs/audit/15: H1-H9 capability matrix vs cosmic-comp@0681eaf/cosmic-greeter@20af063, routes A-C, recommends Route C (privileged seat-follower + per-session ext-image-copy-capture worker + uinput, vkms for headless)"

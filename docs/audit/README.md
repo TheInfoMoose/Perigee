@@ -18,5 +18,6 @@ Phase 1 of `STEPPED_IMPLEMENTATION_PLAN.md` (local, gitignored): a read-only aud
 | `12-claude-validation.md` | Claude's validation of disputed/suspected items | — |
 | `13-evaluation.md` | Evaluation against desired function | — |
 | `14-phase4-completeness.md` | Phase 4 goal components in place or tracked in neb | 4R |
+| `15-headless-greeter-research.md` | What cosmic-comp / cosmic-greeter expose for headless output, capture, input and seat following; Phase 5 route | 4BM |
 
 Each report is written by Gemini, checked with `scripts/validate-step.sh`, read and spot-checked by Claude, then committed.
