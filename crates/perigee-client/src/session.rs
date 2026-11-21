@@ -12,8 +12,8 @@ use tracing::{debug, error, info, warn};
 
 use anyhow::{Context, Result, bail};
 use perigee_protocol::{
-    AudioCodec, ControlMessage, ElementState, HandshakeMessage, InputEvent, KeyModifiers,
-    MouseButtonCode, VideoCodec, WireMessage,
+    AudioCodec, ClipboardPayload, ControlMessage, ElementState, HandshakeMessage, InputEvent,
+    KeyModifiers, MouseButtonCode, VideoCodec, VirtualChannelMessage, WireMessage,
 };
 
 use crate::audio::ClientAudioBuffer;
@@ -381,8 +381,15 @@ impl ClientSessionPipeline {
                         }
                         _ => {}
                     },
-                    WireMessage::Channel(vc) => {
-                        info!(?vc, "Virtual channel payload received");
+                    WireMessage::Channel(VirtualChannelMessage::Clipboard(payload)) => {
+                        let (kind, bytes) = match &payload {
+                            ClipboardPayload::Text(text) => ("text", text.len()),
+                            ClipboardPayload::Image { data, .. } => ("image", data.len()),
+                            ClipboardPayload::Files(paths) => {
+                                ("files", paths.iter().map(String::len).sum())
+                            }
+                        };
+                        debug!(kind, bytes, "Virtual channel clipboard payload received");
                     }
                     WireMessage::Input(_) => {}
                 }
