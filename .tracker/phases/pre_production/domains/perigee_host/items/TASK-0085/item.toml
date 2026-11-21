@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0085"
 type = "task"
 title = "encode_ppm frame encoder"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "perigee_host"
 created_at = "2026-11-21T14:26:51Z"
-updated_at = "2026-11-21T14:26:51Z"
+updated_at = "2026-11-21T14:47:13Z"
 source_ref = "STEP 5D"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 2
 iteration_count = 1
+last_timer_session = "TASK-0085@2026-11-21T14:44:40Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-21"
+commit = "5cac1dc"
+summary = "STEP 5D: PPM Frame Encoder (phased check PASS)"

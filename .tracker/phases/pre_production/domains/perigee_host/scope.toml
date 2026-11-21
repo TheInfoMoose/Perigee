@@ -99,7 +99,7 @@ created_at = "2026-11-21T02:07:53Z"
 [[items.tasks]]
 id = "TASK-0085"
 title = "encode_ppm frame encoder"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-21T14:26:51Z"
 
