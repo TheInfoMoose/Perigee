@@ -161,6 +161,6 @@ created_at = "2026-11-21T14:26:51Z"
 [[items.tasks]]
 id = "TASK-0097"
 title = "README live media + service setup; status rows"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-21T14:26:51Z"
