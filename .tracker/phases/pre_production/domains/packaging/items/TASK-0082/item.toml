@@ -4,11 +4,11 @@ schema_version = 2
 id = "TASK-0082"
 type = "task"
 title = "rustix 1.1.5 → 1.1.6 (BUG-0009)"
-status = "open"
+status = "pending"
 severity = "medium"
 scope_ref = "packaging"
 created_at = "2026-11-21T14:26:51Z"
-updated_at = "2026-11-21T14:26:51Z"
+updated_at = "2026-11-21T14:38:51Z"
 source_ref = "STEP 5A"
 
 [effort]
