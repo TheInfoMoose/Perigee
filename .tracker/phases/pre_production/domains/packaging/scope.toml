@@ -78,7 +78,7 @@ created_at = "2026-11-21T14:26:51Z"
 [[items.tasks]]
 id = "TASK-0096"
 title = "Service as perigee user, minimal caps, sysusers/udev/modules-load (BUG-0004 Linux)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-21T14:26:51Z"
 

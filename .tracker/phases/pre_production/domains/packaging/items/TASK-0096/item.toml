@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0096"
 type = "task"
 title = "Service as perigee user, minimal caps, sysusers/udev/modules-load (BUG-0004 Linux)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "packaging"
 created_at = "2026-11-21T14:26:51Z"
-updated_at = "2026-11-21T14:26:51Z"
+updated_at = "2026-11-21T15:19:31Z"
 source_ref = "STEP 5O"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 2
 iteration_count = 1
+last_timer_session = "TASK-0096@2026-11-21T15:16:41Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-21"
+commit = "8f771c4"
+summary = "STEP 5O: Package the Host as the perigee User with Minimal Capabilities (phased check PASS)"
