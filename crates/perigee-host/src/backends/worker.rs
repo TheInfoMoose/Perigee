@@ -8,6 +8,8 @@ use std::io::{BufReader, Read};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdout, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -136,6 +138,29 @@ pub fn read_worker_frame(reader: &mut impl Read) -> Result<CapturedFrame> {
     })
 }
 
+/// Stops the capture worker a [`WorkerCapturer`] is running, from any thread. A session stop
+/// calls it so a capture loop blocked reading the worker's pipe gets EOF and unwinds.
+#[derive(Debug, Clone)]
+pub struct WorkerStopper(Arc<AtomicU32>);
+
+impl WorkerStopper {
+    /// Sends SIGTERM to the running worker, if any. Safe to call more than once.
+    pub fn stop(&self) {
+        let pid = self.0.swap(0, Ordering::SeqCst);
+        if pid == 0 {
+            return;
+        }
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            return;
+        };
+        // SAFETY: kill takes no pointers. `pid` is our own unreaped child (WorkerCapturer only
+        // waits on it after clearing this slot), so the pid cannot have been reused.
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+    }
+}
+
 /// Captures whichever Wayland session logind reports active on seat0, through a
 /// `capture-worker` child running as that session's user. Restarts the worker when the active
 /// session changes or the worker exits (at most once per poll); while no Wayland session is
@@ -147,6 +172,7 @@ pub struct WorkerCapturer {
     seat: String,
     loginctl: Box<dyn LoginctlRunner + Send + Sync>,
     current: Option<(ActiveSession, Child, BufReader<ChildStdout>)>,
+    worker_pid: Arc<AtomicU32>,
     last_poll: Option<Instant>,
     last_frame: CapturedFrame,
     frame_counter: u64,
@@ -171,6 +197,7 @@ impl WorkerCapturer {
             seat: "seat0".to_string(),
             loginctl,
             current: None,
+            worker_pid: Arc::new(AtomicU32::new(0)),
             last_poll: None,
             last_frame: CapturedFrame {
                 frame_index: 0,
@@ -186,6 +213,11 @@ impl WorkerCapturer {
             frame_counter: 0,
             start: Instant::now(),
         }
+    }
+
+    /// A handle that stops the current (and any later) worker from another thread.
+    pub fn stopper(&self) -> WorkerStopper {
+        WorkerStopper(self.worker_pid.clone())
     }
 
     fn poll_seat(&mut self) -> Result<()> {
@@ -216,6 +248,7 @@ impl WorkerCapturer {
                 .stdout
                 .take()
                 .context("capture worker has no stdout")?;
+            self.worker_pid.store(child.id(), Ordering::SeqCst);
             self.current = Some((session, child, BufReader::new(stdout)));
         }
         Ok(())
@@ -223,6 +256,7 @@ impl WorkerCapturer {
 
     fn stop_worker(&mut self) {
         if let Some((session, mut child, _)) = self.current.take() {
+            self.worker_pid.store(0, Ordering::SeqCst);
             let _ = child.kill();
             let _ = child.wait();
             info!(session = %session.id, "Stopped capture worker");
@@ -384,5 +418,30 @@ mod tests {
         assert_eq!((first.width, first.height), (64, 64));
         assert_eq!(second.frame_index, first.frame_index + 1);
         assert!(!capturer.is_live_display());
+    }
+
+    #[test]
+    fn test_worker_stopper_terminates_a_blocked_reader() {
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdout = child.stdout.take().unwrap();
+        let slot = Arc::new(AtomicU32::new(child.id()));
+        let stopper = WorkerStopper(slot.clone());
+        let reader = std::thread::spawn(move || {
+            let mut buf = [0u8; 4];
+            stdout.read_exact(&mut buf).is_err()
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        stopper.stop();
+        assert!(
+            reader.join().unwrap(),
+            "reader should see EOF once the child is killed"
+        );
+        assert_eq!(slot.load(Ordering::SeqCst), 0);
+        stopper.stop();
+        let _ = child.wait();
     }
 }
