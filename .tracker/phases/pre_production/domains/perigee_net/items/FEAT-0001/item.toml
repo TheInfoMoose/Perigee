@@ -2,11 +2,11 @@
 id = "FEAT-0001"
 type = "feature"
 title = "Pair nodes over SSH via simply-transfer-link"
-status = "open"
+status = "closed"
 severity = "high"
 scope_ref = "perigee_net"
 created_at = "2026-11-20T23:07:03Z"
-updated_at = "2026-11-21T00:52:58Z"
+updated_at = "2026-11-21T06:06:10Z"
 
 [effort]
 logged_time_minutes = 0
@@ -14,4 +14,8 @@ iteration_count = 1
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-21"
+commit = "c7be7b0"
+summary = "SSH pairing landed across 4BH-4BK: vendored simply-transfer-link, pairing module, perigee-host pair, perigee pair + loopback pair-then-connect test"
