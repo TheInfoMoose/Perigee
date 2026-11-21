@@ -13,10 +13,13 @@ anyhow = { workspace = true }
 if-addrs = { workspace = true }
 quinn = { workspace = true }
 rcgen = { workspace = true }
+rand = { workspace = true }
 perigee-protocol = { workspace = true }
 rustls = { workspace = true }
 rustls-webpki = { workspace = true }
+russh = { workspace = true }
 sha2 = { workspace = true }
+simply-transfer-link = { workspace = true }
 socket2 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
