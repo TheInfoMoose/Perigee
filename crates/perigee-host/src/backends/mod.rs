@@ -4,6 +4,8 @@ pub mod linux_capture;
 pub mod linux_input;
 pub mod macos;
 #[cfg(target_os = "linux")]
+pub mod uinput;
+#[cfg(target_os = "linux")]
 pub mod wayland_shm;
 pub mod windows;
 
@@ -29,6 +31,8 @@ pub use macos::{
     MacOsScreenCaptureKitCapturer, TranslatedCgEvent, map_cv_pixel_format_to_wire,
     map_scancode_to_macos_keycode, translate_input_event_to_cg, translate_modifiers_to_cg_flags,
 };
+#[cfg(target_os = "linux")]
+pub use uinput::{UINPUT_ABS_MAX, UinputInjector, encode_input_event, encode_uinput_user_dev};
 #[cfg(target_os = "linux")]
 pub use wayland_shm::{WaylandShmCapturer, pick_shm_format, shm_format_to_pixel_format};
 pub use windows::{
