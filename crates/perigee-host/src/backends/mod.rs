@@ -8,6 +8,8 @@ pub mod uinput;
 #[cfg(target_os = "linux")]
 pub mod wayland_shm;
 pub mod windows;
+#[cfg(target_os = "linux")]
+pub mod worker;
 
 pub use linux_capture::{
     DRM_FORMAT_ABGR8888, DRM_FORMAT_ARGB8888, DRM_FORMAT_NV12, DRM_FORMAT_XBGR8888,
@@ -50,3 +52,5 @@ pub use windows::{
     normalize_win32_absolute_coords, normalize_win32_virtual_desktop_coords,
     translate_input_event_to_win32,
 };
+#[cfg(target_os = "linux")]
+pub use worker::{WorkerCapturer, WorkerCommand, read_worker_frame};
