@@ -154,7 +154,7 @@ created_at = "2026-11-21T06:14:44Z"
 [[items.tasks]]
 id = "TASK-0083"
 title = "README rate-limit note, run examples out from under Pairing (TASK-0081)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-21T14:26:51Z"
 
