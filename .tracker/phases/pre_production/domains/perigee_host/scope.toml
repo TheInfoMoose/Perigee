@@ -33,6 +33,13 @@ status = "pending"
 severity = "high"
 created_at = "2026-11-21T20:40:28Z"
 
+[[items.bugs]]
+id = "BUG-0013"
+title = "Stop leaking capture workers and stalling the follow-seat capture loop"
+status = "pending"
+severity = "high"
+created_at = "2026-11-21T20:44:23Z"
+
 [[items.features]]
 id = "FEAT-0002"
 title = "Add host rate limiting, session caps and a ClientHello read timeout"
