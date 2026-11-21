@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0087"
 type = "task"
 title = "UinputInjector (/dev/uinput keyboard + absolute pointer)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "perigee_host"
 created_at = "2026-11-21T14:26:51Z"
-updated_at = "2026-11-21T14:26:51Z"
+updated_at = "2026-11-21T14:53:03Z"
 source_ref = "STEP 5F"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 2
 iteration_count = 1
+last_timer_session = "TASK-0087@2026-11-21T14:50:17Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-21"
+commit = "a8c3518"
+summary = "STEP 5F: /dev/uinput Input Injector (phased check PASS)"
