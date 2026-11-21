@@ -553,7 +553,7 @@ impl PerigeeHostDaemon {
         let session_id = match self.handle_handshake(handshake).await {
             Ok(id) => id,
             Err(e) => {
-                Self::send_auth_failure_and_retain(conn, e.to_string()).await;
+                Self::send_auth_failure_and_retain(conn, format!("{e:#}")).await;
                 return Err(e);
             }
         };
@@ -577,7 +577,7 @@ impl PerigeeHostDaemon {
         {
             Ok(s) => s,
             Err(e) => {
-                Self::send_auth_failure_and_retain(conn, e.to_string()).await;
+                Self::send_auth_failure_and_retain(conn, format!("{e:#}")).await;
                 return Err(e);
             }
         };

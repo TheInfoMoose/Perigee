@@ -693,7 +693,7 @@ pub async fn run_host(
                                 Err(e) => {
                                     warn!(
                                         %remote,
-                                        error = %e,
+                                        error = %format!("{e:#}"),
                                         "Failed to serve incoming QUIC connection"
                                     );
                                 }
