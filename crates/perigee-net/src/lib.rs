@@ -3,7 +3,7 @@
 //! Provides low-latency, multiplexed network transport backed by `quinn` (`0.11.12` / `quinn-proto 0.11.19`)
 //! and `rustls` (`0.23.46`, TLS 1.3). Features explicit VPN adapter interface discovery and binding via
 //! `if-addrs` and `socket2`, datagram channels for raw input, multiplexed streams for video/audio/virtual
-//! channels, TLS 1.3 peer certificate SHA-256 channel binding, and live network metrics.
+//! channels, mutual TLS 1.3 with pinned Ed25519 node keys, SSH pairing through simply-transfer-link, and live network metrics.
 
 pub mod endpoint;
 mod fsutil;

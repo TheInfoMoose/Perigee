@@ -2,8 +2,9 @@
 name: perigee-wire-and-quic
 description: >-
   Procedures and invariants for implementing and modifying perigee-common,
-  perigee-protocol, and perigee-net (NIST vault, Ed25519 TLS 1.3 channel binding,
-  postcard wire framing, if-addrs VPN discovery, socket2 adapter binding, and quinn QUIC streams).
+  perigee-protocol, and perigee-net (NIST vault, Ed25519 mTLS node identities,
+  SSH pairing via simply-transfer-link, postcard wire framing, if-addrs VPN
+  discovery, socket2 adapter binding, and quinn QUIC streams).
 ---
 
 # Perigee Wire Protocol, NIST Vault & QUIC Transport Skill
@@ -13,12 +14,10 @@ Activate this skill when working on `perigee-common`, `perigee-protocol`, or `pe
 ## 1. `perigee-common` Invariants (`crates/perigee-common`)
 
 - **Secret Zeroization**:
-  - `HostCredentials` and `VaultTokenModel` must derive/implement `zeroize::Zeroize`, call `self.zeroize()` in `Drop`, and mask secret fields with `"[REDACTED]"` in custom `fmt::Debug` implementations.
+  - `VaultTokenModel` must derive/implement `zeroize::Zeroize`, call `self.zeroize()` in `Drop`, and mask secret fields with `"[REDACTED]"` in custom `fmt::Debug` implementations.
 - **NIST Credential Vault (`NistVault`)**:
   - Backed by `simply_transfer_crypto::SecureStorage` (which wraps `keyring-core` with NIST SP 800-57 AES-256-GCM encrypted vault).
   - Always zeroize temporary `String` buffers returned from `self.storage.get_secret(...)` after deserializing.
-- **TLS 1.3 Channel-Bound Ed25519 Signatures**:
-  - To bind challenge signatures to self-signed peer-to-peer QUIC connections, `NistVault::sign_channel_bound_challenge` and `verify_channel_bound_challenge` hash the prefix `b"Perigee-v1-ChannelBinding:"` + `challenge` + `tls_cert_sha256` (`[u8; 32]`) with SHA-256 before signing/verifying with `ed25519-dalek`.
 
 ## 2. `perigee-protocol` Invariants (`crates/perigee-protocol`)
 
@@ -37,8 +36,14 @@ Activate this skill when working on `perigee-common`, `perigee-protocol`, or `pe
   - On macOS/Windows, resolve the interface IP via `if-addrs` (or `IP_BOUND_IF` on macOS when interface index is known) and bind non-blocking before passing the `std::net::UdpSocket` to `quinn::Endpoint::new`, failing closed if the interface is missing.
 - **QUIC & TLS 1.3 Configuration (`quinn` + `rustls`)**:
   - Enforce `PERIGEE_ALPN = &[b"perigee-v1"]` on both client and server configs.
-  - Use `rustls::crypto::ring::default_provider()`.
-  - Capture the peer's leaf certificate SHA-256 digest in `PeerCertChannelVerifier::verify_server_cert` and expose it via `QuicConnectionManager::peer_cert_sha256()` so upper layers can verify channel-bound Ed25519 challenges.
+  - Use `rustls::crypto::aws_lc_rs` as the only crypto provider.
+  - Authenticate peers with mutual TLS 1.3 using persistent Ed25519 `NodeIdentity` keys (`<config dir>/identity.key`, 0600 via `fsutil::write_private_file`) and extract peer keys from certificates with `node_key_from_certificate` (webpki SPKI).
+  - Bind host endpoints with `QuicServerListener::bind_mtls` using `TrustedClientVerifier` and `PeerAuthorizer`, enforcing `HandshakeLimiter` and `MAX_OPEN_CONNECTIONS` on accept.
+  - Connect client endpoints with `QuicClientTransport::connect_mtls` using `PinnedHostVerifier`.
+- **Trust Store (`TrustedKeys`)**:
+  - Use `TrustedKeys::add` for `trusted_clients` and `TrustedKeys::pin` / `TrustedKeys::remove_label` for `known_hosts` with canonical targets via `perigee_client::canonical_target`.
+- **SSH Pairing (`pairing.rs`)**:
+  - Run one-client SSH pairing over `simply-transfer-link` via `PairingWindow` (host) and `pair_with_host` (client), reusing the node's Ed25519 key as the SSH key. Never log a pairing secret.
 
 ## 4. Verification
 After any change to `perigee-common`, `perigee-protocol`, or `perigee-net`, run:
