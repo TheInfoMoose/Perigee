@@ -4,11 +4,11 @@ schema_version = 2
 id = "TASK-0040"
 type = "task"
 title = "Print host node key instead of cert SHA-256 in perigee connect"
-status = "open"
+status = "closed"
 severity = "low"
 scope_ref = "perigee_cli"
 created_at = "2026-11-20T02:41:44Z"
-updated_at = "2026-11-21T00:52:58Z"
+updated_at = "2026-11-21T02:51:51Z"
 
 [effort]
 logged_time_minutes = 0
@@ -16,4 +16,8 @@ iteration_count = 1
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-21"
+commit = "c8a5e7e"
+summary = "Fixed by STEP 4BC: perigee connect prints the host node key"
