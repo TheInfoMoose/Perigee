@@ -81,7 +81,11 @@ pub fn query_active_session(
         "State",
     ])?;
     let session_type = property(&session, "Type").unwrap_or_default();
-    if session_type != "wayland" {
+    let class = property(&session, "Class").unwrap_or_default();
+    // greetd starts cosmic-greeter without XDG_SESSION_TYPE, so logind records the greeter as
+    // tty/unspecified although it runs cosmic-comp. The worker finds (or fails to find) the
+    // Wayland socket itself, so a greeter is always worth trying.
+    if session_type != "wayland" && class != "greeter" {
         return Ok(None);
     }
     let uid: u32 = property(&session, "User")
@@ -109,7 +113,7 @@ pub fn query_active_session(
         uid,
         gid,
         user_name: property(&session, "Name").unwrap_or_default().to_string(),
-        class: property(&session, "Class").unwrap_or_default().to_string(),
+        class: class.to_string(),
         session_type: session_type.to_string(),
         runtime_dir,
     }))
@@ -206,6 +210,29 @@ mod tests {
             (session.id.as_str(), session.uid, session.class.as_str()),
             ("4", 1000, "user")
         );
+    }
+
+    #[test]
+    fn test_query_active_session_accepts_tty_greeter() {
+        let greeter = fake(&[
+            ("show-seat seat0", "ActiveSession=11\n"),
+            (
+                "show-session 11",
+                "User=987\nName=cosmic-greeter\nClass=greeter\nType=tty\nState=active\n",
+            ),
+            ("show-user 987", "GID=987\nRuntimePath=/run/user/987\n"),
+        ]);
+        let session = query_active_session(&greeter, "seat0").unwrap().unwrap();
+        assert_eq!(
+            (
+                session.id.as_str(),
+                session.uid,
+                session.class.as_str(),
+                session.session_type.as_str()
+            ),
+            ("11", 987, "greeter", "tty")
+        );
+        assert_eq!(session.runtime_dir, PathBuf::from("/run/user/987"));
     }
 
     #[test]
