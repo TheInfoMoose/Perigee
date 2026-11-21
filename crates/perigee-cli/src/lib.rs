@@ -48,6 +48,8 @@ Host options:
   --bind <ADDR>          UDP socket bind address (default: 127.0.0.1:4433)
   --interface <NAME>     Bind exclusively to network/VPN interface NAME (fails closed)
   --name <NODE>          Host node identifier (default: perigee-host-node)
+  --config-dir <DIR>     Directory holding identity.key and trusted_clients
+  --media <MODE>         standin (default), live or follow-seat (see perigee-host --help)
 
 General options:
   -h, --help             Print this help text and exit

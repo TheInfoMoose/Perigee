@@ -94,10 +94,11 @@ async fn run_connect(args: ConnectArgs) -> Result<()> {
     if let Some(mut video_rx) = session.take_video_rx() {
         let frame_count_task = frame_count.clone();
         let mut dump_path = args.dump_frame.clone();
+        let mut dump_error_reported = false;
         tokio::spawn(async move {
             while let Some(frame) = video_rx.recv().await {
                 frame_count_task.fetch_add(1, Ordering::Relaxed);
-                if let Some(path) = dump_path.take() {
+                if let Some(path) = dump_path.clone() {
                     let written = perigee_host::encode_ppm(
                         frame.width,
                         frame.height,
@@ -107,13 +108,23 @@ async fn run_connect(args: ConnectArgs) -> Result<()> {
                     )
                     .and_then(|ppm| std::fs::write(&path, ppm).map_err(anyhow::Error::from));
                     match written {
-                        Ok(()) => println!(
-                            "wrote {}x{} frame to {}",
-                            frame.width,
-                            frame.height,
-                            path.display()
-                        ),
-                        Err(e) => eprintln!("could not write {}: {e:#}", path.display()),
+                        Ok(()) => {
+                            println!(
+                                "wrote {}x{} frame to {}",
+                                frame.width,
+                                frame.height,
+                                path.display()
+                            );
+                            dump_path = None;
+                        }
+                        Err(e) if !dump_error_reported => {
+                            eprintln!(
+                                "could not write {} yet: {e:#} (will retry on the next frame)",
+                                path.display()
+                            );
+                            dump_error_reported = true;
+                        }
+                        Err(_) => {}
                     }
                 }
             }
