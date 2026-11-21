@@ -5,15 +5,16 @@
 //! Ed25519 node key: the client accepts only the pinned host key, and the host accepts only
 //! client keys its [`PeerAuthorizer`] trusts. There is no unauthenticated transport.
 
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use quinn::{Endpoint, EndpointConfig, ServerConfig, TransportConfig};
 use rustls::pki_types::{CertificateDer, ServerName};
 use sha2::{Digest, Sha256};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     AllowList, NODE_KEY_LEN, NodeIdentity, PERIGEE_SERVER_NAME, PeerAuthorizer,
@@ -149,11 +150,53 @@ impl QuicClientTransport {
     }
 }
 
+/// Most QUIC connections the host keeps open at once; further handshakes are silently dropped.
+pub const MAX_OPEN_CONNECTIONS: usize = 64;
+
+/// Most handshake attempts one source IP may start per [`HANDSHAKE_WINDOW`]; further attempts in
+/// the window are silently dropped, so a peer that keeps failing the trust check is throttled.
+pub const MAX_HANDSHAKES_PER_WINDOW: u32 = 20;
+
+/// Length of the per-IP handshake counting window.
+pub const HANDSHAKE_WINDOW: Duration = Duration::from_secs(60);
+
+/// Tracked source IPs above which expired windows are pruned.
+const HANDSHAKE_TRACK_PRUNE_AT: usize = 1024;
+
+/// Tracked source IPs above which new sources are dropped until windows expire.
+const HANDSHAKE_TRACK_MAX: usize = 4096;
+
+/// Counts handshake attempts per source IP in fixed windows.
+#[derive(Debug, Default)]
+pub struct HandshakeLimiter {
+    attempts: Mutex<HashMap<IpAddr, (u32, Instant)>>,
+}
+
+impl HandshakeLimiter {
+    /// Records an attempt from `ip` at `now`; returns whether it is within the limit.
+    pub fn allow(&self, ip: IpAddr, now: Instant) -> bool {
+        let mut attempts = self.attempts.lock().unwrap_or_else(|p| p.into_inner());
+        if attempts.len() >= HANDSHAKE_TRACK_PRUNE_AT {
+            attempts.retain(|_, (_, start)| now.duration_since(*start) < HANDSHAKE_WINDOW);
+        }
+        if attempts.len() >= HANDSHAKE_TRACK_MAX && !attempts.contains_key(&ip) {
+            return false;
+        }
+        let entry = attempts.entry(ip).or_insert((0, now));
+        if now.duration_since(entry.1) >= HANDSHAKE_WINDOW {
+            *entry = (0, now);
+        }
+        entry.0 = entry.0.saturating_add(1);
+        entry.0 <= MAX_HANDSHAKES_PER_WINDOW
+    }
+}
+
 /// Host Daemon Transport Listener for accepting incoming remote viewer clients
 pub struct QuicServerListener {
     pub config: QuicTransportConfig,
     pub endpoint: Endpoint,
     pub server_cert_sha256: [u8; 32],
+    limiter: HandshakeLimiter,
 }
 
 impl QuicServerListener {
@@ -206,6 +249,7 @@ impl QuicServerListener {
             config,
             endpoint,
             server_cert_sha256,
+            limiter: HandshakeLimiter::default(),
         })
     }
 
@@ -218,6 +262,16 @@ impl QuicServerListener {
     pub async fn accept(&self) -> Option<QuicConnectionManager> {
         while let Some(incoming) = self.endpoint.accept().await {
             let remote_addr = incoming.remote_address();
+            if self.endpoint.open_connections() >= MAX_OPEN_CONNECTIONS {
+                debug!("Dropping QUIC handshake from {remote_addr}: connection limit reached");
+                incoming.ignore();
+                continue;
+            }
+            if !self.limiter.allow(remote_addr.ip(), Instant::now()) {
+                debug!("Dropping QUIC handshake from {remote_addr}: too many attempts");
+                incoming.ignore();
+                continue;
+            }
             match incoming.await {
                 Ok(connection) => {
                     info!(
@@ -385,5 +439,24 @@ impl rustls::server::danger::ClientCertVerifier for TrustedClientVerifier {
         self.provider
             .signature_verification_algorithms
             .supported_schemes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_handshake_limiter_throttles_per_ip_and_resets() {
+        let limiter = HandshakeLimiter::default();
+        let a: IpAddr = "192.0.2.1".parse().unwrap();
+        let b: IpAddr = "192.0.2.2".parse().unwrap();
+        let t0 = Instant::now();
+        for _ in 0..MAX_HANDSHAKES_PER_WINDOW {
+            assert!(limiter.allow(a, t0));
+        }
+        assert!(!limiter.allow(a, t0));
+        assert!(limiter.allow(b, t0));
+        assert!(limiter.allow(a, t0 + HANDSHAKE_WINDOW));
     }
 }

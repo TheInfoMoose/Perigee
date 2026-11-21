@@ -49,7 +49,7 @@ pub use backends::{
 };
 
 pub mod daemon;
-pub use daemon::{HostSessionEngine, PerigeeHostDaemon};
+pub use daemon::{CLIENT_HELLO_TIMEOUT, HostSessionEngine, PerigeeHostDaemon};
 
 pub mod encoder;
 pub use encoder::{EncoderConfig, MacOsVideoToolboxEncoder, SoftwareVideoEncoder, VideoEncoder};

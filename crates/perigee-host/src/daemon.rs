@@ -257,12 +257,17 @@ fn bitrate_kbps_from_bytes_per_sec(bytes_per_sec: u64) -> u32 {
     u32::try_from(bytes_per_sec.saturating_mul(8) / 1000).unwrap_or(u32::MAX)
 }
 
+/// How long a newly connected client has to send its `ClientHello` before the host closes the
+/// connection.
+pub const CLIENT_HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Elevated Host Daemon Service Background Manager (`systemd`, Windows Service, macOS `launchd`)
 pub struct PerigeeHostDaemon {
     pub host_name: String,
     pub backend: CaptureBackendType,
     pub runtime_env: RuntimeEnvironment,
     pub active_sessions: Arc<Mutex<Vec<Arc<HostSessionEngine>>>>,
+    pub client_hello_timeout: Duration,
 }
 
 impl PerigeeHostDaemon {
@@ -281,6 +286,7 @@ impl PerigeeHostDaemon {
             backend,
             runtime_env,
             active_sessions: Arc::new(Mutex::new(Vec::new())),
+            client_hello_timeout: CLIENT_HELLO_TIMEOUT,
         }
     }
 
@@ -413,10 +419,18 @@ impl PerigeeHostDaemon {
     ) -> Result<Arc<HostSessionEngine>> {
         let conn: Arc<QuicConnectionManager> = conn.into();
 
-        let initial_wire = conn
-            .recv_uni_message()
-            .await
-            .context("Failed to receive initial handshake message over QUIC stream")?;
+        let initial_wire =
+            match tokio::time::timeout(self.client_hello_timeout, conn.recv_uni_message()).await {
+                Ok(result) => result
+                    .context("Failed to receive initial handshake message over QUIC stream")?,
+                Err(_) => {
+                    conn.connection.close(0u32.into(), b"no ClientHello");
+                    bail!(
+                        "client sent no ClientHello within {:?}",
+                        self.client_hello_timeout
+                    );
+                }
+            };
 
         let WireMessage::Handshake(handshake) = initial_wire else {
             bail!(
@@ -1280,5 +1294,49 @@ mod tests {
             }))
             .await
             .expect("handle_incoming_wire_message should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_serve_connection_times_out_without_client_hello() {
+        let peers = LoopbackPeers::generate().unwrap();
+        let mut daemon = PerigeeHostDaemon::new(
+            "hello-timeout-host".to_string(),
+            CaptureBackendType::WaylandPipeWire,
+        );
+        daemon.client_hello_timeout = Duration::from_millis(200);
+        let daemon = Arc::new(daemon);
+        let listener = QuicServerListener::bind_mtls(
+            "127.0.0.1:0".parse().unwrap(),
+            QuicTransportConfig::default(),
+            peers.server_auth(),
+        )
+        .expect("Failed to bind QUIC listener");
+        let server_addr = listener.local_addr().unwrap();
+        let daemon_server = daemon.clone();
+        let server_task = tokio::spawn(async move {
+            let server_conn = listener.accept().await.unwrap();
+            let result = daemon_server.serve_connection(server_conn).await;
+            (listener, result)
+        });
+        let client = QuicClientTransport::new(QuicTransportConfig::default());
+        let client_conn = client
+            .connect_mtls(server_addr, peers.client_auth())
+            .await
+            .expect("Client failed to connect");
+        let (_listener, result) = tokio::time::timeout(Duration::from_secs(5), server_task)
+            .await
+            .expect("serve_connection did not time out")
+            .unwrap();
+        let Err(err) = result else {
+            panic!("serve_connection must fail without a ClientHello");
+        };
+        assert!(
+            format!("{err:#}").contains("no ClientHello"),
+            "got: {err:#}"
+        );
+        assert_eq!(daemon.active_session_count().await, 0);
+        tokio::time::timeout(Duration::from_secs(5), client_conn.connection.closed())
+            .await
+            .expect("host did not close the connection");
     }
 }
