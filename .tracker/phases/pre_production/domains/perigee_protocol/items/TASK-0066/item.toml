@@ -4,11 +4,11 @@ schema_version = 2
 id = "TASK-0066"
 type = "task"
 title = "Remove requires_elevation, legacy-transport log text and HostCredentials"
-status = "pending"
+status = "open"
 severity = "low"
 scope_ref = "perigee_protocol"
 created_at = "2026-11-20T23:07:03Z"
-updated_at = "2026-11-20T23:07:03Z"
+updated_at = "2026-11-21T00:52:58Z"
 
 [effort]
 logged_time_minutes = 0

@@ -17,21 +17,21 @@ tracked_files = [
 [[items.bugs]]
 id = "BUG-0006"
 title = "Write identity.key atomically and zeroize the DER read buffer"
-status = "pending"
+status = "open"
 severity = "low"
 created_at = "2026-11-20T23:07:03Z"
 
 [[items.bugs]]
 id = "BUG-0007"
 title = "Use a unique temp file and close it before rename in TrustedKeys::save"
-status = "pending"
+status = "open"
 severity = "low"
 created_at = "2026-11-20T23:07:03Z"
 
 [[items.features]]
 id = "FEAT-0001"
 title = "Pair nodes over SSH via simply-transfer-link"
-status = "pending"
+status = "open"
 severity = "high"
 created_at = "2026-11-20T23:07:03Z"
 

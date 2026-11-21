@@ -4,11 +4,11 @@ schema_version = 2
 id = "TASK-0040"
 type = "task"
 title = "Print host node key instead of cert SHA-256 in perigee connect"
-status = "pending"
+status = "open"
 severity = "low"
 scope_ref = "perigee_cli"
 created_at = "2026-11-20T02:41:44Z"
-updated_at = "2026-11-20T02:41:48Z"
+updated_at = "2026-11-21T00:52:58Z"
 
 [effort]
 logged_time_minutes = 0

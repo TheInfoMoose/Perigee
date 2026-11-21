@@ -25,7 +25,7 @@ created_at = "2026-11-20T00:35:54Z"
 [[items.tasks]]
 id = "TASK-0040"
 title = "Print host node key instead of cert SHA-256 in perigee connect"
-status = "pending"
+status = "open"
 severity = "low"
 created_at = "2026-11-20T02:41:44Z"
 

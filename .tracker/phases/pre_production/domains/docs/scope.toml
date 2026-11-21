@@ -126,6 +126,6 @@ created_at = "2026-11-20T22:51:41Z"
 [[items.tasks]]
 id = "TASK-0065"
 title = "Update AGENTS.md and the wire-and-quic skill for Phase 4 mTLS"
-status = "pending"
+status = "open"
 severity = "low"
 created_at = "2026-11-20T23:07:03Z"

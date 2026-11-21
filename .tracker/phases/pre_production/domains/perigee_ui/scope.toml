@@ -21,7 +21,7 @@ bugs = []
 [[items.features]]
 id = "FEAT-0003"
 title = "Add node identity and trust management to perigee-ui"
-status = "pending"
+status = "open"
 severity = "medium"
 created_at = "2026-11-20T23:07:03Z"
 
