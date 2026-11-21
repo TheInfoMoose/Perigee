@@ -42,6 +42,7 @@ Connect options:
   --interface <NAME>     Bind outbound socket to network/VPN interface or IP NAME
   --for <SECONDS>        Disconnect cleanly after whole SECONDS have elapsed
   --timeout <SECONDS>    Handshake timeout in whole SECONDS (default: 5)
+  --dump-frame <FILE>    Write the first received frame to FILE as a PPM (raw frames only)
 
 Host options:
   --bind <ADDR>          UDP socket bind address (default: 127.0.0.1:4433)
@@ -71,6 +72,8 @@ pub struct ConnectArgs {
     /// Host node key from `--host-key`; `None` uses the `known_hosts` pin for `target`.
     pub host_key: Option<[u8; NODE_KEY_LEN]>,
     pub config_dir: Option<PathBuf>,
+    /// Write the first received frame to this PPM file (`--dump-frame`).
+    pub dump_frame: Option<PathBuf>,
 }
 
 /// A `perigee` client key-management subcommand.
@@ -159,6 +162,7 @@ fn parse_connect_args(args: &[String]) -> Result<CliCommand> {
     let mut handshake_timeout = perigee_client::DEFAULT_HANDSHAKE_TIMEOUT;
     let mut host_key: Option<[u8; NODE_KEY_LEN]> = None;
     let mut config_dir: Option<PathBuf> = None;
+    let mut dump_frame: Option<PathBuf> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -173,6 +177,16 @@ fn parse_connect_args(args: &[String]) -> Result<CliCommand> {
                     bail!("--interface needs a value");
                 }
                 interface = Some(val.clone());
+                i += 2;
+            }
+            "--dump-frame" => {
+                let val = args
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow!("--dump-frame needs a file path"))?;
+                if val.is_empty() {
+                    bail!("--dump-frame needs a file path");
+                }
+                dump_frame = Some(PathBuf::from(val));
                 i += 2;
             }
             "--for" => {
@@ -239,6 +253,7 @@ fn parse_connect_args(args: &[String]) -> Result<CliCommand> {
         handshake_timeout,
         host_key,
         config_dir,
+        dump_frame,
     }))
 }
 
@@ -445,6 +460,7 @@ mod tests {
                 handshake_timeout: perigee_client::DEFAULT_HANDSHAKE_TIMEOUT,
                 host_key: None,
                 config_dir: None,
+                dump_frame: None,
             })
         );
 
@@ -471,6 +487,7 @@ mod tests {
                 handshake_timeout: Duration::from_secs(2),
                 host_key: None,
                 config_dir: None,
+                dump_frame: None,
             })
         );
     }
@@ -642,6 +659,7 @@ mod tests {
             handshake_timeout: perigee_client::DEFAULT_HANDSHAKE_TIMEOUT,
             host_key: None,
             config_dir: Some(dir.clone()),
+            dump_frame: None,
         };
         let err = client_auth_for(&args).unwrap_err();
         assert!(
@@ -738,6 +756,7 @@ mod tests {
             handshake_timeout: perigee_client::DEFAULT_HANDSHAKE_TIMEOUT,
             host_key: None,
             config_dir: config_dir.clone(),
+            dump_frame: None,
         };
         assert_eq!(client_auth_for(&args).unwrap().host_key, key);
         run_client_admin(&ClientAdmin::TrustRemove {
@@ -800,5 +819,28 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn test_parse_connect_dump_frame() {
+        let base = HostOptions::default();
+        let parsed = parse_cli_args(
+            &s(&[
+                "connect",
+                "192.0.2.10",
+                "--dump-frame",
+                "/tmp/perigee-test/f.ppm",
+            ]),
+            base.clone(),
+        )
+        .unwrap();
+        let CliCommand::Connect(args) = parsed else {
+            panic!("expected a connect command");
+        };
+        assert_eq!(
+            args.dump_frame,
+            Some(PathBuf::from("/tmp/perigee-test/f.ppm"))
+        );
+        assert!(parse_cli_args(&s(&["connect", "192.0.2.10", "--dump-frame"]), base).is_err());
     }
 }

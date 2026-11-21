@@ -93,9 +93,29 @@ async fn run_connect(args: ConnectArgs) -> Result<()> {
     let frame_count = Arc::new(AtomicU64::new(0));
     if let Some(mut video_rx) = session.take_video_rx() {
         let frame_count_task = frame_count.clone();
+        let mut dump_path = args.dump_frame.clone();
         tokio::spawn(async move {
-            while video_rx.recv().await.is_some() {
+            while let Some(frame) = video_rx.recv().await {
                 frame_count_task.fetch_add(1, Ordering::Relaxed);
+                if let Some(path) = dump_path.take() {
+                    let written = perigee_host::encode_ppm(
+                        frame.width,
+                        frame.height,
+                        frame.width.saturating_mul(4),
+                        frame.format,
+                        &frame.data,
+                    )
+                    .and_then(|ppm| std::fs::write(&path, ppm).map_err(anyhow::Error::from));
+                    match written {
+                        Ok(()) => println!(
+                            "wrote {}x{} frame to {}",
+                            frame.width,
+                            frame.height,
+                            path.display()
+                        ),
+                        Err(e) => eprintln!("could not write {}: {e:#}", path.display()),
+                    }
+                }
             }
         });
     }

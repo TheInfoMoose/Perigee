@@ -238,6 +238,7 @@ async fn test_pairing_then_connect() {
         handshake_timeout: perigee_client::DEFAULT_HANDSHAKE_TIMEOUT,
         host_key: None,
         config_dir: Some(client_dir.clone()),
+        dump_frame: None,
     };
     let auth = client_auth_for(&connect_args).expect("auth from the pins pairing wrote");
     let session = tokio::time::timeout(
