@@ -134,7 +134,7 @@ created_at = "2026-11-21T14:26:51Z"
 [[items.tasks]]
 id = "TASK-0090"
 title = "perigee-host snapshot / input-test; logs to stderr"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-21T14:26:51Z"
 
