@@ -1,0 +1,2 @@
+# Let the perigee service account create virtual input devices.
+KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="perigee", MODE="0660", OPTIONS+="static_node=uinput"

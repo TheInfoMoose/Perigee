@@ -80,6 +80,9 @@ install -m 0644 "packaging/linux/com.theinfomoose.Perigee.metainfo.xml" "${STAGE
 install -m 0644 "packaging/icons/perigee.png" "${STAGE_TAR}/share/icons/com.theinfomoose.Perigee.png"
 install_hicolor_icons "${STAGE_TAR}/share/icons/hicolor"
 install -m 0644 "packaging/linux/perigee-host.service" "${STAGE_TAR}/share/systemd/"
+install -m 0644 "packaging/linux/perigee.sysusers.conf" "${STAGE_TAR}/share/systemd/"
+install -m 0644 "packaging/linux/60-perigee-uinput.rules" "${STAGE_TAR}/share/systemd/"
+install -m 0644 "packaging/linux/perigee-uinput.conf" "${STAGE_TAR}/share/systemd/"
 install -m 0644 "README.md" "${STAGE_TAR}/README.md"
 install -m 0644 "LICENSE" "${STAGE_TAR}/LICENSE"
 
@@ -98,6 +101,9 @@ if command -v dpkg-deb >/dev/null 2>&1; then
         "${DEB_ROOT}/usr/share/applications" \
         "${DEB_ROOT}/usr/share/metainfo" \
         "${DEB_ROOT}/lib/systemd/system" \
+        "${DEB_ROOT}/usr/lib/sysusers.d" \
+        "${DEB_ROOT}/usr/lib/udev/rules.d" \
+        "${DEB_ROOT}/usr/lib/modules-load.d" \
         "${DEB_ROOT}/usr/share/doc/perigee"
 
     install -m 0755 "${BIN_DIR}/perigee-ui" "${DEB_ROOT}/usr/bin/perigee-ui"
@@ -106,6 +112,18 @@ if command -v dpkg-deb >/dev/null 2>&1; then
     install -m 0644 "packaging/linux/com.theinfomoose.Perigee.metainfo.xml" "${DEB_ROOT}/usr/share/metainfo/com.theinfomoose.Perigee.metainfo.xml"
     install_hicolor_icons "${DEB_ROOT}/usr/share/icons/hicolor"
     install -m 0644 "packaging/linux/perigee-host.service" "${DEB_ROOT}/lib/systemd/system/perigee-host.service"
+    install -m 0644 "packaging/linux/perigee.sysusers.conf" "${DEB_ROOT}/usr/lib/sysusers.d/perigee.conf"
+    install -m 0644 "packaging/linux/60-perigee-uinput.rules" "${DEB_ROOT}/usr/lib/udev/rules.d/60-perigee-uinput.rules"
+    install -m 0644 "packaging/linux/perigee-uinput.conf" "${DEB_ROOT}/usr/lib/modules-load.d/perigee-uinput.conf"
+    cat > "${DEB_ROOT}/DEBIAN/postinst" <<'POSTINST'
+#!/bin/sh
+set -e
+systemd-sysusers perigee.conf || true
+modprobe uinput || true
+udevadm control --reload || true
+udevadm trigger --name-match=uinput || true
+POSTINST
+    chmod 0755 "${DEB_ROOT}/DEBIAN/postinst"
     install -m 0644 "README.md" "${DEB_ROOT}/usr/share/doc/perigee/README.md"
     install -m 0644 "LICENSE" "${DEB_ROOT}/usr/share/doc/perigee/copyright"
 
@@ -167,6 +185,7 @@ mkdir -p %{buildroot}/usr/bin
 mkdir -p %{buildroot}/usr/share/applications
 mkdir -p %{buildroot}/usr/share/metainfo
 mkdir -p %{buildroot}/usr/lib/systemd/system
+mkdir -p %{buildroot}/usr/lib/sysusers.d %{buildroot}/usr/lib/udev/rules.d %{buildroot}/usr/lib/modules-load.d
 mkdir -p %{buildroot}/usr/share/doc/perigee
 
 install -m 0755 "${WORKSPACE_ROOT}/${BIN_DIR}/perigee-ui" %{buildroot}/usr/bin/perigee-ui
@@ -180,8 +199,17 @@ done
 mkdir -p %{buildroot}/usr/share/icons/hicolor/scalable/apps
 install -m 0644 "${WORKSPACE_ROOT}/packaging/icons/hicolor/scalable/apps/com.theinfomoose.Perigee-symbolic.svg" %{buildroot}/usr/share/icons/hicolor/scalable/apps/com.theinfomoose.Perigee-symbolic.svg
 install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/perigee-host.service" %{buildroot}/usr/lib/systemd/system/perigee-host.service
+install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/perigee.sysusers.conf" %{buildroot}/usr/lib/sysusers.d/perigee.conf
+install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/60-perigee-uinput.rules" %{buildroot}/usr/lib/udev/rules.d/60-perigee-uinput.rules
+install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/perigee-uinput.conf" %{buildroot}/usr/lib/modules-load.d/perigee-uinput.conf
 install -m 0644 "${WORKSPACE_ROOT}/README.md" %{buildroot}/usr/share/doc/perigee/README.md
 install -m 0644 "${WORKSPACE_ROOT}/LICENSE" %{buildroot}/usr/share/doc/perigee/LICENSE
+
+%post
+systemd-sysusers perigee.conf || :
+modprobe uinput || :
+udevadm control --reload || :
+udevadm trigger --name-match=uinput || :
 
 %files
 /usr/bin/perigee-ui
@@ -190,6 +218,9 @@ install -m 0644 "${WORKSPACE_ROOT}/LICENSE" %{buildroot}/usr/share/doc/perigee/L
 /usr/share/metainfo/com.theinfomoose.Perigee.metainfo.xml
 /usr/share/icons/hicolor/*/apps/com.theinfomoose.Perigee*
 /usr/lib/systemd/system/perigee-host.service
+/usr/lib/sysusers.d/perigee.conf
+/usr/lib/udev/rules.d/60-perigee-uinput.rules
+/usr/lib/modules-load.d/perigee-uinput.conf
 /usr/share/doc/perigee/README.md
 /usr/share/doc/perigee/LICENSE
 EOF

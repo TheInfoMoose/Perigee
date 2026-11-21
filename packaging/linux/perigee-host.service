@@ -1,16 +1,26 @@
 [Unit]
-Description=Perigee Elevated Host Capture & QUIC Display Daemon
-After=network-online.target
+Description=Perigee host (remote desktop; follows the active seat0 session, greeter included)
+After=network-online.target systemd-logind.service
 Wants=network-online.target
 
 [Service]
 Type=simple
+User=perigee
+Group=perigee
+# identity.key and trusted_clients live here (0700, owned by perigee).
+StateDirectory=perigee
+StateDirectoryMode=0700
+Environment=PERIGEE_CONFIG_DIR=/var/lib/perigee
 # Set PERIGEE_BIND_INTERFACE=<vpn interface> (e.g. wg0) in a drop-in;
 # without it the host listens on 127.0.0.1:4433 only.
-ExecStart=/usr/bin/perigee-host
+ExecStart=/usr/bin/perigee-host --media follow-seat
 Restart=on-failure
 RestartSec=5
-AmbientCapabilities=CAP_NET_RAW CAP_SYS_ADMIN
+# CAP_SETUID/CAP_SETGID: start each capture worker as the active session's user.
+# CAP_NET_RAW: SO_BINDTODEVICE for --interface / PERIGEE_BIND_INTERFACE.
+AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_NET_RAW
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_NET_RAW
+NoNewPrivileges=yes
 
 [Install]
 WantedBy=multi-user.target
