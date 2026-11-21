@@ -1,6 +1,6 @@
 //! Host accept loop and graceful shutdown.
 
-use crate::PerigeeHostDaemon;
+use crate::{MediaMode, PerigeeHostDaemon};
 use anyhow::{Context, Result, anyhow, bail};
 use perigee_net::{
     DEFAULT_PAIRING_PORT, DEFAULT_PAIRING_TTL, IDENTITY_FILE_NAME, NODE_KEY_LEN, NodeIdentity,
@@ -44,6 +44,8 @@ Options:
   --name <NODE>         Host node identifier (default: perigee-host-node)
   --config-dir <DIR>    Directory holding identity.key and trusted_clients
                         (default: PERIGEE_CONFIG_DIR, else ~/.config/perigee)
+  --media <MODE>        standin (default; synthetic frames, logged input) or live (Linux:
+                        capture this Wayland session, inject input via /dev/uinput)
   -h, --help            Print this help text and exit
   -V, --version         Print version information and exit
 
@@ -64,6 +66,8 @@ pub struct HostOptions {
     /// Directory holding `identity.key` and `trusted_clients`; `None` means
     /// [`default_config_dir`].
     pub config_dir: Option<PathBuf>,
+    /// Media backends for sessions (`--media`); [`MediaMode::StandIn`] by default.
+    pub media: MediaMode,
 }
 
 impl Default for HostOptions {
@@ -75,6 +79,7 @@ impl Default for HostOptions {
             interface: None,
             node_name: DEFAULT_NODE_NAME.to_string(),
             config_dir: None,
+            media: MediaMode::StandIn,
         }
     }
 }
@@ -205,6 +210,17 @@ pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand
                     bail!("--config-dir needs a value");
                 }
                 opts.config_dir = Some(PathBuf::from(val));
+                i += 2;
+            }
+            "--media" => {
+                let val = slice
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow!("--media needs a value: standin or live"))?;
+                opts.media = match val.as_str() {
+                    "standin" => MediaMode::StandIn,
+                    "live" => MediaMode::Live,
+                    other => bail!("unknown --media '{other}': expected standin or live"),
+                };
                 i += 2;
             }
             other => bail!("unknown argument '{other}'; run with --help"),
@@ -436,7 +452,9 @@ pub fn bind_host(options: &HostOptions) -> Result<(Arc<PerigeeHostDaemon>, QuicS
         config_dir.join(TRUSTED_CLIENTS_FILE_NAME),
     ));
     let backend = PerigeeHostDaemon::auto_detect_backend();
-    let daemon = Arc::new(PerigeeHostDaemon::new(options.node_name.clone(), backend));
+    let mut daemon = PerigeeHostDaemon::new(options.node_name.clone(), backend);
+    daemon.media = options.media;
+    let daemon = Arc::new(daemon);
     let listener = QuicServerListener::bind_mtls(
         options.bind_addr,
         options.transport_config(),
@@ -730,6 +748,7 @@ mod tests {
                 interface: Some("wg0".to_string()),
                 node_name: "lab".to_string(),
                 config_dir: None,
+                media: MediaMode::StandIn,
             })
         );
 
@@ -1019,5 +1038,26 @@ mod tests {
         assert!(announced.contains("secret:"));
         assert!(announced.contains("perigee pair <HOST>"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_parse_media_flag() {
+        let live: Vec<String> = ["run", "--media", "live"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            parse_host_args(&live, HostOptions::default()).unwrap(),
+            HostCommand::Run(HostOptions {
+                media: MediaMode::Live,
+                ..HostOptions::default()
+            })
+        );
+        assert_eq!(HostOptions::default().media, MediaMode::StandIn);
+        let bad: Vec<String> = ["--media", "dmabuf"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(parse_host_args(&bad, HostOptions::default()).is_err());
     }
 }

@@ -25,7 +25,21 @@ use crate::backends::{
     FrameCapturer, LinuxCaptureController, MacOsScreenCaptureKitCapturer, WindowsDxgiCapturer,
 };
 use crate::encoder::{EncoderConfig, MacOsVideoToolboxEncoder, SoftwareVideoEncoder, VideoEncoder};
-use crate::{CaptureBackendType, HostInputInjector, NativeInputInjector};
+use crate::{CaptureBackendType, HostInputInjector, MediaMode, NativeInputInjector};
+
+/// Frames per second of live (raw-frame) media sessions.
+pub const LIVE_RAW_FPS: u32 = 10;
+
+/// Called with the size of each frame sent to the client, so pixel-space input can be scaled.
+type ScreenSink = Arc<dyn Fn(u32, u32) + Send + Sync>;
+
+/// A session's capturer, encoder, input injector and optional screen-size sink.
+type SessionMedia = (
+    Box<dyn FrameCapturer>,
+    Box<dyn VideoEncoder>,
+    Arc<dyn HostInputInjector>,
+    Option<ScreenSink>,
+);
 
 /// Active Session Controller on Host Daemon
 pub struct HostSessionEngine {
@@ -40,6 +54,8 @@ pub struct HostSessionEngine {
     pub last_acked_frame_id: Arc<AtomicU64>,
     pub is_active: Arc<AtomicBool>,
     stop_tx: Arc<watch::Sender<bool>>,
+    frame_interval: Duration,
+    screen_sink: Option<ScreenSink>,
 }
 
 impl HostSessionEngine {
@@ -71,19 +87,39 @@ impl HostSessionEngine {
         backend_type: CaptureBackendType,
         encoder_config: EncoderConfig,
     ) -> Result<Self> {
-        let width = encoder_config.width.max(1);
-        let height = encoder_config.height.max(1);
-        let capturer = Self::build_frame_capturer(backend_type, 1, width, height)
-            .context("failed to start the frame capturer for this session")?;
+        Self::with_media(session_id, backend_type, encoder_config, MediaMode::StandIn)
+    }
 
-        let encoder: Box<dyn VideoEncoder> = match backend_type {
-            CaptureBackendType::MacOsScreenCaptureKit => {
-                Box::new(MacOsVideoToolboxEncoder::new(encoder_config))
-            }
-            _ => Box::new(SoftwareVideoEncoder::new(encoder_config)),
+    /// Creates a [`HostSessionEngine`] whose capture, encoder and input follow `media`.
+    pub fn with_media(
+        session_id: String,
+        backend_type: CaptureBackendType,
+        encoder_config: EncoderConfig,
+        media: MediaMode,
+    ) -> Result<Self> {
+        let fps = match media {
+            MediaMode::StandIn => encoder_config.target_fps,
+            MediaMode::Live => LIVE_RAW_FPS,
         };
-
-        let input_injector = Arc::new(NativeInputInjector::new(backend_type));
+        let frame_interval = Duration::from_nanos(1_000_000_000 / u64::from(fps.max(1)));
+        let (capturer, encoder, input_injector, screen_sink) = match media {
+            MediaMode::StandIn => {
+                let width = encoder_config.width.max(1);
+                let height = encoder_config.height.max(1);
+                let capturer = Self::build_frame_capturer(backend_type, 1, width, height)
+                    .context("failed to start the frame capturer for this session")?;
+                let encoder: Box<dyn VideoEncoder> = match backend_type {
+                    CaptureBackendType::MacOsScreenCaptureKit => {
+                        Box::new(MacOsVideoToolboxEncoder::new(encoder_config))
+                    }
+                    _ => Box::new(SoftwareVideoEncoder::new(encoder_config)),
+                };
+                let injector: Arc<dyn HostInputInjector> =
+                    Arc::new(NativeInputInjector::new(backend_type));
+                (capturer, encoder, injector, None)
+            }
+            MediaMode::Live => Self::build_live_media(encoder_config)?,
+        };
         let (stop_tx, _) = watch::channel(false);
 
         Ok(Self {
@@ -98,7 +134,37 @@ impl HostSessionEngine {
             last_acked_frame_id: Arc::new(AtomicU64::new(0)),
             is_active: Arc::new(AtomicBool::new(true)),
             stop_tx: Arc::new(stop_tx),
+            frame_interval,
+            screen_sink,
         })
+    }
+
+    /// Linux live media: Wayland shared-memory capture of output 0, raw frames, uinput input.
+    #[cfg(target_os = "linux")]
+    fn build_live_media(encoder_config: EncoderConfig) -> Result<SessionMedia> {
+        let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(std::path::PathBuf::from)
+            .context("live media needs XDG_RUNTIME_DIR for its shared-memory buffer")?;
+        let shm_capturer = crate::backends::WaylandShmCapturer::connect(None, &runtime_dir, 0)
+            .context("failed to start Wayland capture (is WAYLAND_DISPLAY set?)")?;
+        let uinput = Arc::new(
+            crate::backends::UinputInjector::new(shm_capturer.width(), shm_capturer.height())
+                .context("failed to create the /dev/uinput devices")?,
+        );
+        let sink_target = uinput.clone();
+        let screen_sink: ScreenSink = Arc::new(move |width, height| {
+            sink_target.set_screen_size(width, height);
+        });
+        let capturer: Box<dyn FrameCapturer> = Box::new(shm_capturer);
+        let encoder: Box<dyn VideoEncoder> =
+            Box::new(crate::encoder::RawVideoEncoder::new(encoder_config));
+        let injector: Arc<dyn HostInputInjector> = uinput;
+        Ok((capturer, encoder, injector, Some(screen_sink)))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn build_live_media(_encoder_config: EncoderConfig) -> Result<SessionMedia> {
+        anyhow::bail!("live media is only implemented on Linux")
     }
 
     /// Returns `true` if the session capture engine is currently active.
@@ -127,9 +193,12 @@ impl HostSessionEngine {
         let encoder = self.encoder.clone();
         let force_keyframe = self.force_keyframe_flag.clone();
         let video_tx = outgoing_tx.clone();
+        let frame_interval = self.frame_interval;
+        let screen_sink = self.screen_sink.clone();
 
         tokio::spawn(async move {
-            let target_frame_duration = Duration::from_nanos(1_000_000_000 / 60);
+            let target_frame_duration = frame_interval;
+            let mut sent_size = (0u32, 0u32);
 
             while is_active.load(Ordering::Relaxed) && !*stop_rx.borrow() {
                 let loop_start = Instant::now();
@@ -156,6 +225,12 @@ impl HostSessionEngine {
                 let mut enc_lock = encoder.lock().await;
                 match enc_lock.encode(&captured_frame, need_keyframe) {
                     Ok(video_msg) => {
+                        if let Some(sink) = &screen_sink
+                            && (video_msg.width, video_msg.height) != sent_size
+                        {
+                            sent_size = (video_msg.width, video_msg.height);
+                            sink(sent_size.0, sent_size.1);
+                        }
                         if video_tx.send(WireMessage::Video(video_msg)).await.is_err() {
                             error!("Outgoing transport channel closed; exiting capture loop");
                             break;
@@ -268,6 +343,8 @@ pub struct PerigeeHostDaemon {
     pub runtime_env: RuntimeEnvironment,
     pub active_sessions: Arc<Mutex<Vec<Arc<HostSessionEngine>>>>,
     pub client_hello_timeout: Duration,
+    /// Media backends for new sessions; [`MediaMode::StandIn`] unless `bind_host` sets it.
+    pub media: MediaMode,
 }
 
 impl PerigeeHostDaemon {
@@ -287,6 +364,7 @@ impl PerigeeHostDaemon {
             runtime_env,
             active_sessions: Arc::new(Mutex::new(Vec::new())),
             client_hello_timeout: CLIENT_HELLO_TIMEOUT,
+            media: MediaMode::StandIn,
         }
     }
 
@@ -344,10 +422,11 @@ impl PerigeeHostDaemon {
         session_id: String,
         encoder_config: EncoderConfig,
     ) -> Result<Arc<HostSessionEngine>> {
-        let session = Arc::new(HostSessionEngine::new(
+        let session = Arc::new(HostSessionEngine::with_media(
             session_id,
             self.backend,
             encoder_config,
+            self.media,
         )?);
         let mut sessions = self.active_sessions.lock().await;
         sessions.push(session.clone());

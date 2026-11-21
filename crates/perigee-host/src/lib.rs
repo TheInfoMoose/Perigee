@@ -82,6 +82,19 @@ pub enum CaptureBackendType {
     X11Fallback,
 }
 
+/// Which media backends a host session uses (`perigee-host --media`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MediaMode {
+    /// Stand-in capture, encoder and input (synthetic frames, logged input). The default, so
+    /// tests and dev runs never touch a real screen or pointer.
+    #[default]
+    StandIn,
+    /// Linux only: capture the compositor this process reaches through `WAYLAND_DISPLAY`
+    /// (`ext-image-copy-capture-v1`, output 0), inject input through `/dev/uinput`, and send
+    /// raw frames at [`daemon::LIVE_RAW_FPS`].
+    Live,
+}
+
 /// Raw Frame Buffer captured from Host GPU / Display Subsystem
 #[derive(Debug, Clone)]
 pub struct CapturedFrame {
