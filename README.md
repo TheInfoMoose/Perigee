@@ -42,13 +42,25 @@ cargo test --workspace --all-targets --locked
 
 ## Running the host (development)
 
-> **Note:** Only clients whose node key is in the host's `trusted_clients` file can connect, and the client refuses a host whose key it has not pinned. Keep the host bound to loopback or a VPN interface anyway: there is no rate limiting yet.
+> **Note:** Only clients whose node key is in the host's `trusted_clients` file can connect, and the client refuses a host whose key it has not pinned. Keep the host bound to loopback or a VPN interface anyway: handshakes are rate limited per source IP (20 per 60 s) and open connections are capped at 64, but the port still answers anyone who can reach it.
 
 By default, `perigee-host` binds only to loopback (`127.0.0.1:4433`). Configure binding via CLI flags (`--bind`, `--interface`, `--name`, `--config-dir`) or environment variables (CLI flags override environment variables):
 
 * `PERIGEE_BIND_ADDR`: Socket address and port to bind (default: `127.0.0.1:4433`).
 * `PERIGEE_BIND_INTERFACE`: Optional network/VPN interface name (e.g., `wg0`, `tailscale0`, `utun3`). If set, `perigee-host` binds strictly to that interface and exits with an error if the interface cannot be found or has no matching address.
 * `PERIGEE_CONFIG_DIR`: Directory holding `identity.key`, `trusted_clients` and `known_hosts` (default: `$XDG_CONFIG_HOME/perigee`, else `~/.config/perigee`; `%APPDATA%\Perigee` on Windows).
+
+```bash
+# Run on loopback (default 127.0.0.1:4433)
+cargo run -p perigee-host --locked
+
+# Bind to a specific VPN interface via CLI flag or env vars (fails closed if wg0 is absent)
+cargo run -p perigee-host --locked -- --interface wg0
+PERIGEE_BIND_INTERFACE=wg0 PERIGEE_BIND_ADDR=0.0.0.0:4433 cargo run -p perigee-host --locked
+
+# Connect with the CLI client for 10 seconds
+cargo run -p perigee-cli --locked -- connect 127.0.0.1:4433 --for 10
+```
 
 Trust is set up once per pair of machines:
 
@@ -77,18 +89,6 @@ perigee connect 192.0.2.10
 ```
 
 `perigee pair` checks that the host proves it holds `HOST_KEY` before sending the secret, adds this machine to the host's `trusted_clients` as `laptop`, and pins the host in `known_hosts` for `192.0.2.10:4433`. Pins are stored per target, trimmed and lowercased with the default port added, so `host.example.com` and `192.0.2.10` are pinned separately. If the host fails to save the new trust entry, only the host's output shows it; run `perigee-host trust list` to check.
-
-```bash
-# Run on loopback (default 127.0.0.1:4433)
-cargo run -p perigee-host --locked
-
-# Bind to a specific VPN interface via CLI flag or env vars (fails closed if wg0 is absent)
-cargo run -p perigee-host --locked -- --interface wg0
-PERIGEE_BIND_INTERFACE=wg0 PERIGEE_BIND_ADDR=0.0.0.0:4433 cargo run -p perigee-host --locked
-
-# Connect with the CLI client for 10 seconds
-cargo run -p perigee-cli --locked -- connect 127.0.0.1:4433 --for 10
-```
 
 ---
 
