@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0106"
 type = "task"
 title = "Follow the greeter whatever its logind Type (BUG-0012)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "perigee_host"
 created_at = "2026-11-21T20:59:58Z"
-updated_at = "2026-11-21T20:59:58Z"
+updated_at = "2026-11-21T21:11:38Z"
 source_ref = "STEP 5BC"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 1
 iteration_count = 1
+last_timer_session = "TASK-0106@2026-11-21T21:09:41Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-21"
+commit = "e7905bd"
+summary = "STEP 5BC: Follow the Greeter Session Whatever Its logind Type (phased check PASS)"
