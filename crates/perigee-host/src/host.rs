@@ -93,11 +93,6 @@ impl HostOptions {
         Ok(opts)
     }
 
-    /// Builds [`HostOptions`] from process environment variables.
-    pub fn from_env() -> Result<Self> {
-        Self::from_env_with(|k| std::env::var(k).ok())
-    }
-
     /// Produces the [`QuicTransportConfig`] corresponding to `self.interface`.
     pub fn transport_config(&self) -> QuicTransportConfig {
         match &self.interface {

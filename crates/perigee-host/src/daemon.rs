@@ -388,7 +388,6 @@ impl PerigeeHostDaemon {
                 success: false,
                 session_token: None,
                 error_message: Some(error_message),
-                requires_elevation: false,
             }))
             .await;
         // Retain `conn` briefly so `quinn::Connection::drop` does not transmit
@@ -445,7 +444,7 @@ impl PerigeeHostDaemon {
             peer_node_key = %conn
                 .peer_node_key()
                 .map(|key| node_key_to_hex(&key))
-                .unwrap_or_else(|| "none (legacy transport)".to_string()),
+                .unwrap_or_else(|| "missing".to_string()),
             "Admitted client session"
         );
 
@@ -469,7 +468,6 @@ impl PerigeeHostDaemon {
                 success: true,
                 session_token: Some(session_id.clone()),
                 error_message: None,
-                requires_elevation: false,
             }))
             .await
         {
@@ -1171,7 +1169,6 @@ mod tests {
                 success: true,
                 session_token: None,
                 error_message: None,
-                requires_elevation: false,
             }))
             .await
             .unwrap();

@@ -152,7 +152,6 @@ pub enum HandshakeMessage {
         success: bool,
         session_token: Option<String>,
         error_message: Option<String>,
-        requires_elevation: bool,
     },
 }
 

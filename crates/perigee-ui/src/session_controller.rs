@@ -934,7 +934,6 @@ mod tests {
                 .send_uni_message(&WireMessage::Handshake(HandshakeMessage::AuthResponse {
                     success: true,
                     session_token: Some(String::from("ui-loopback-session-token")),
-                    requires_elevation: false,
                     error_message: None,
                 }))
                 .await

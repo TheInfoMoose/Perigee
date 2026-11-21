@@ -594,7 +594,6 @@ mod tests {
             .send(WireMessage::Handshake(HandshakeMessage::AuthResponse {
                 success: true,
                 session_token: Some(String::from("tok-123")),
-                requires_elevation: false,
                 error_message: None,
             }))
             .await

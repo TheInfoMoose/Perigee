@@ -1,4 +1,4 @@
-//! Domain models for connection profiles, zeroized host credentials, and NIST session tokens.
+//! Domain models for connection profiles and NIST session tokens.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -56,37 +56,6 @@ impl ConnectionProfile {
 
     pub fn group(&self) -> &str {
         &self.group_name
-    }
-}
-
-/// Zeroized Credential Container for Host or Session Authentication.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct HostCredentials {
-    pub username: String,
-    pub secret: String,
-    pub ed25519_public_key_hex: Option<String>,
-}
-
-impl Zeroize for HostCredentials {
-    fn zeroize(&mut self) {
-        self.username.zeroize();
-        self.secret.zeroize();
-    }
-}
-
-impl Drop for HostCredentials {
-    fn drop(&mut self) {
-        self.zeroize();
-    }
-}
-
-impl fmt::Debug for HostCredentials {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("HostCredentials")
-            .field("username", &self.username)
-            .field("secret", &"[REDACTED]")
-            .field("ed25519_public_key_hex", &self.ed25519_public_key_hex)
-            .finish()
     }
 }
 

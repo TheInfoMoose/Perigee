@@ -62,13 +62,11 @@ fn test_handshake_all_variants_roundtrip() {
             success: true,
             session_token: Some("tok_nist_aes256gcm_9f8e7d6c".to_string()),
             error_message: None,
-            requires_elevation: false,
         }),
         WireMessage::Handshake(HandshakeMessage::AuthResponse {
             success: false,
             session_token: None,
-            error_message: Some("Channel-bound Ed25519 signature mismatch".to_string()),
-            requires_elevation: true,
+            error_message: Some("client is not trusted".to_string()),
         }),
     ];
 

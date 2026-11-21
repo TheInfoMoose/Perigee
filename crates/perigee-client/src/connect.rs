@@ -303,7 +303,6 @@ mod tests {
                     success: true,
                     session_token: Some(String::from("tok-connect-01")),
                     error_message: None,
-                    requires_elevation: false,
                 }))
                 .await
                 .expect("Failed to send AuthResponse");
@@ -350,7 +349,6 @@ mod tests {
                     success: false,
                     session_token: None,
                     error_message: Some(String::from("denied")),
-                    requires_elevation: false,
                 }))
                 .await
                 .expect("Failed to send rejection AuthResponse");
@@ -433,7 +431,6 @@ mod tests {
                     success: true,
                     session_token: Some(String::from("tok-mtls-01")),
                     error_message: None,
-                    requires_elevation: false,
                 }))
                 .await
                 .expect("Failed to send AuthResponse");

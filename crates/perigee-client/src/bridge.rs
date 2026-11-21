@@ -367,7 +367,6 @@ mod tests {
                     success: true,
                     session_token: Some(String::from("bridge-tok-01")),
                     error_message: None,
-                    requires_elevation: false,
                 }))
                 .await
                 .expect("Server failed to send AuthResponse");
@@ -548,7 +547,6 @@ mod tests {
                     success: true,
                     session_token: Some(String::from("tok-disconnect-01")),
                     error_message: None,
-                    requires_elevation: false,
                 }))
                 .await
                 .expect("Failed to send AuthResponse");
@@ -619,7 +617,6 @@ mod tests {
                     success: true,
                     session_token: Some(String::from("tok-host-close-01")),
                     error_message: None,
-                    requires_elevation: false,
                 }))
                 .await
                 .expect("Failed to send AuthResponse");
@@ -691,7 +688,6 @@ mod tests {
                     success: true,
                     session_token: Some(String::from("tok-twice-01")),
                     error_message: None,
-                    requires_elevation: false,
                 }))
                 .await
                 .expect("Failed to send AuthResponse");

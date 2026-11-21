@@ -89,17 +89,6 @@ mod tests {
             serde_json::from_str(&json).expect("Failed to deserialize ConnectionProfile");
         assert_eq!(profile, decoded);
 
-        let mut creds = HostCredentials {
-            username: "testuser".to_string(),
-            secret: "testuser-password-fixture".to_string(),
-            ed25519_public_key_hex: Some("deadbeef".to_string()),
-        };
-        let creds_debug = format!("{creds:?}");
-        assert!(creds_debug.contains("[REDACTED]"));
-        assert!(!creds_debug.contains("testuser-password-fixture"));
-        creds.zeroize();
-        assert!(creds.secret.is_empty());
-
         let mut token = VaultTokenModel {
             session_token: "testuser-token-fixture".to_string(),
             auth_method: "Ed25519+P2P".to_string(),

@@ -249,7 +249,6 @@ mod tests {
             success: true,
             session_token: None,
             error_message: None,
-            requires_elevation: false,
         };
         assert!(daemon.handle_handshake(not_hello).await.is_err());
     }
