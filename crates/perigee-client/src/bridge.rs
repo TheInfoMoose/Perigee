@@ -229,11 +229,10 @@ impl QuicSessionBridge {
             let msg = WireMessage::Control(ControlMessage::Disconnect {
                 reason: reason.to_string(),
             });
-            let _ = tokio::time::timeout(Duration::from_secs(1), async {
-                self.connection.send_uni_message(&msg).await?;
-                tokio::time::sleep(Duration::from_millis(20)).await;
-                Ok::<(), anyhow::Error>(())
-            })
+            let _ = tokio::time::timeout(
+                Duration::from_secs(1),
+                self.connection.send_uni_message_acked(&msg),
+            )
             .await;
         }
 

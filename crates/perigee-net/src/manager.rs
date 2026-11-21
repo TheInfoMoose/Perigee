@@ -115,6 +115,21 @@ impl QuicConnectionManager {
         Ok(())
     }
 
+    /// Like [`Self::send_uni_message`], but returns only after the peer has acknowledged every
+    /// byte of the stream (or stopped it), so closing the connection right after cannot discard
+    /// the message.
+    pub async fn send_uni_message_acked(&self, msg: &WireMessage) -> Result<()> {
+        let framed = encode_length_prefixed(msg)?;
+        let mut stream = self.open_unidirectional_stream().await?;
+        stream.write_all(&framed).await?;
+        stream.finish()?;
+        self.metrics
+            .bytes_sent
+            .fetch_add(framed.len() as u64, Ordering::Relaxed);
+        stream.stopped().await?;
+        Ok(())
+    }
+
     /// Accepts and decodes a single length-prefixed [`WireMessage`] from an incoming unidirectional stream.
     pub async fn recv_uni_message(&self) -> Result<WireMessage> {
         let mut recv = self.connection.accept_uni().await?;
@@ -364,5 +379,39 @@ mod tests {
         let (srv_uni, srv_dgram) = server_handle.await.unwrap();
         assert_eq!(srv_uni, video_msg);
         assert_eq!(srv_dgram, ack_msg);
+    }
+
+    #[tokio::test]
+    async fn test_send_uni_message_acked_survives_immediate_close() {
+        let peers = LoopbackPeers::generate().unwrap();
+        let listener = QuicServerListener::bind_mtls(
+            "127.0.0.1:0".parse().unwrap(),
+            QuicTransportConfig::default(),
+            peers.server_auth(),
+        )
+        .expect("Failed to bind QUIC listener");
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let conn = listener.accept().await.expect("Server failed to accept");
+            let msg = conn.recv_uni_message().await.expect("message lost");
+            (listener, msg)
+        });
+        let client = QuicClientTransport::new(QuicTransportConfig::default());
+        let conn = client
+            .connect_mtls(addr, peers.client_auth())
+            .await
+            .expect("Client failed to connect");
+        let msg = WireMessage::Control(ControlMessage::Disconnect {
+            reason: String::from("bye"),
+        });
+        conn.send_uni_message_acked(&msg)
+            .await
+            .expect("acked send failed");
+        conn.connection.close(0u32.into(), b"done");
+        let (_listener, received) = tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .expect("server timed out")
+            .unwrap();
+        assert_eq!(received, msg);
     }
 }
