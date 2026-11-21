@@ -74,6 +74,6 @@ created_at = "2026-11-21T18:08:13Z"
 [[items.tasks]]
 id = "TASK-0108"
 title = "CLI host usage; --dump-frame retry (TASK-0101)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-21T20:59:58Z"

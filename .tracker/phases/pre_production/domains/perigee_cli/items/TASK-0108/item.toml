@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0108"
 type = "task"
 title = "CLI host usage; --dump-frame retry (TASK-0101)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "perigee_cli"
 created_at = "2026-11-21T20:59:58Z"
-updated_at = "2026-11-21T20:59:58Z"
+updated_at = "2026-11-21T21:15:47Z"
 source_ref = "STEP 5BE"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 2
 iteration_count = 1
+last_timer_session = "TASK-0108@2026-11-21T21:13:41Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-21"
+commit = "ef7f50b"
+summary = "STEP 5BE: CLI Host Usage and --dump-frame Retry (phased check PASS)"
