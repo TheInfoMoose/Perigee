@@ -15,9 +15,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
 
-/// Largest raw frame payload a capture worker sends to its parent.
-#[cfg(target_os = "linux")]
-const WORKER_FRAME_MAX_BYTES: usize = 8 * 1024 * 1024;
 /// Pause between capture-worker frames (10 fps).
 #[cfg(target_os = "linux")]
 const WORKER_FRAME_INTERVAL: Duration = Duration::from_millis(100);
@@ -486,6 +483,28 @@ fn watch_lifeline<R: std::io::Read + Send + 'static>(
     })
 }
 
+/// Fits a captured frame to the wire budget so `RawVideoEncoder` passes it through unscaled.
+#[cfg(target_os = "linux")]
+fn worker_frame_message(
+    frame: &crate::CapturedFrame,
+) -> anyhow::Result<perigee_protocol::WireMessage> {
+    let fitted = crate::fit_raw_frame(frame, crate::RAW_FRAME_MAX_BYTES)?;
+    Ok(perigee_protocol::WireMessage::Video(
+        perigee_protocol::VideoFrameMessage {
+            frame_id: fitted.frame_index,
+            monitor_id: fitted.display_id,
+            timestamp_us: fitted.timestamp_us,
+            codec: perigee_protocol::VideoCodec::RawBgra,
+            is_keyframe: true,
+            width: fitted.width,
+            height: fitted.height,
+            stride: fitted.stride,
+            format: fitted.pixel_format,
+            payload: fitted.data,
+        },
+    ))
+}
+
 /// Runs a one-shot local tool and returns the line to print.
 pub fn run_host_tool(tool: &HostTool) -> Result<String> {
     #[cfg(target_os = "linux")]
@@ -572,20 +591,7 @@ pub fn run_host_tool(tool: &HostTool) -> Result<String> {
                 let mut stdout = std::io::stdout().lock();
                 loop {
                     let frame = capturer.capture_next_frame()?;
-                    let fitted = crate::fit_raw_frame(&frame, WORKER_FRAME_MAX_BYTES)?;
-                    let message =
-                        perigee_protocol::WireMessage::Video(perigee_protocol::VideoFrameMessage {
-                            frame_id: fitted.frame_index,
-                            monitor_id: fitted.display_id,
-                            timestamp_us: fitted.timestamp_us,
-                            codec: perigee_protocol::VideoCodec::RawBgra,
-                            is_keyframe: true,
-                            width: fitted.width,
-                            height: fitted.height,
-                            stride: fitted.stride,
-                            format: fitted.pixel_format,
-                            payload: fitted.data,
-                        });
+                    let message = worker_frame_message(&frame)?;
                     let framed = perigee_protocol::encode_length_prefixed(&message)?;
                     if stdout
                         .write_all(&framed)
@@ -1367,5 +1373,35 @@ mod tests {
             rx.try_recv().is_err(),
             "lifeline callback should fire exactly once"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_worker_frame_message_fits_wire_budget() {
+        let frame = crate::CapturedFrame {
+            frame_index: 7,
+            timestamp_us: 1234,
+            display_id: 0,
+            width: 5120,
+            height: 1440,
+            stride: 20480,
+            pixel_format: perigee_protocol::PixelFormat::Rgba8,
+            data: vec![0u8; 20480 * 1440],
+            is_dmabuf_or_metal_handle: false,
+        };
+        let message = worker_frame_message(&frame).unwrap();
+        let framed = perigee_protocol::encode_length_prefixed(&message).unwrap();
+        assert!(!framed.is_empty());
+        match message {
+            WireMessage::Video(video) => {
+                assert_eq!(video.width, 1706);
+                assert_eq!(video.height, 480);
+                assert_eq!(video.frame_id, 7);
+                assert_eq!(video.codec, VideoCodec::RawBgra);
+                assert!(video.is_keyframe);
+                assert!(video.payload.len() <= crate::RAW_FRAME_MAX_BYTES);
+            }
+            other => panic!("expected WireMessage::Video, got {other:?}"),
+        }
     }
 }
