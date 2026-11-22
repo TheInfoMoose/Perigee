@@ -137,7 +137,7 @@ created_at = "2026-11-20T02:43:56Z"
 [[items.tasks]]
 id = "TASK-0113"
 title = "Capture worker stops through a stdin lifeline; sticky stop, no signals (BUG-0013)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-22T21:43:21Z"
 
