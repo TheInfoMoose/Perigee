@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0116"
 type = "task"
 title = "Blocked-capture stop test fails on its timeout (BUG-0015)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "inbox"
 created_at = "2026-11-22T21:43:21Z"
-updated_at = "2026-11-22T21:43:21Z"
+updated_at = "2026-11-22T22:11:47Z"
 source_ref = "STEP 6D"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 1
 iteration_count = 1
+last_timer_session = "TASK-0116@2026-11-22T22:09:49Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-22"
+commit = "e71dde9"
+summary = "STEP 6D: Blocked-Capture Stop Test Can Fail (phased check PASS)"
