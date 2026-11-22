@@ -6,7 +6,7 @@ Audited HEAD: 8611388
 - Every Linux (`.tar.gz`, `.deb`, `.rpm`, `.AppImage`), macOS (`.tar.gz`, `rFerram.app`, `.dmg`), and Windows (`.zip`, `.msi`) package bundles both `rferram-ui` and `rferram-server` together, with no lightweight destination-only package or installer split (`L-REPO-2`, `R9`).
 - Service unit configurations across OSes are inconsistent and unsafe (`L-REPO-6`): Linux `rferram-server.service` runs `/usr/bin/rferram-server` as `root` with `AmbientCapabilities=CAP_NET_RAW CAP_SYS_ADMIN`, `RFERRAM_BIND_ADDR=0.0.0.0:4433`, and no systemd sandboxing or display environment; macOS `com.theinfomoose.rferram-server.plist` is copied into `Resources/` without installation; Windows `rferram.wxs` installs `rferram-server.exe` as a plain file with no `<ServiceInstall>` registration.
 - CI (`.github/workflows/ci.yml`) and release (`.github/workflows/release.yml`) workflows exercise no authenticated session and no client-server interop against the real `rferram-server` daemon (`L-REPO-5`); `release.yml` omits `cargo test` entirely, and both workflows are currently blocked by two RustSec advisories in `Cargo.lock`.
-- Documentation and agent scripts contain broken local developer paths (`/home/theinfomoose/Documents/...` in `AGENTS.md` and `.agents/skills/*`, hardcoded `WORKSPACE_DIR="/srv/devshare/rFerram"` in `verify-crate.sh`, `L-REPO-3`), `README.md` advertises unimplemented capabilities as complete (`L-REPO-4`), and tracked sources/tests/vendor files contain RFC 1918 / CGNAT / public IPv4 literals, `/srv/devshare` and personal user paths, a hardcoded SSH host-key fallback seed, and a deterministic vault fallback key prefix.
+- Documentation and agent scripts contain broken local developer paths (`<out-of-repo path>` in `AGENTS.md` and `.agents/skills/*`, hardcoded `WORKSPACE_DIR="/srv/devshare/rFerram"` in `verify-crate.sh`, `L-REPO-3`), `README.md` advertises unimplemented capabilities as complete (`L-REPO-4`), and tracked sources/tests/vendor files contain RFC 1918 / CGNAT / public IPv4 literals, `/srv/devshare` and personal user paths, a hardcoded SSH host-key fallback seed, and a deterministic vault fallback key prefix.
 
 ## Status matrix
 | Capability | Status (Real/Partial/Stub/Missing) | Evidence | Req |
@@ -17,7 +17,7 @@ Audited HEAD: 8611388
 | service unit privileges (systemd, launchd, Windows) | Partial | `packaging/linux/rferram-server.service:6-13` runs as `root` (`CAP_NET_RAW CAP_SYS_ADMIN`) on `0.0.0.0:4433`; `packaging/macos/com.theinfomoose.rferram-server.plist:4-20` has no `UserName` and is never loaded; `packaging/windows/rferram.wxs:42-44` has no `<ServiceInstall>` | R6, R7, R8, R12 |
 | CI gates | Partial | `.github/workflows/ci.yml:23-132` runs `cargo audit`, `cargo deny`, `cargo fmt`, `cargo clippy` (Ubuntu only), `cargo test`, and `RFERRAM_SMOKE_TEST=1` bind-only check; no real client-server session test | R2, R3, R12 |
 | release gates | Partial | `.github/workflows/release.yml:41-289` runs lint/audit/deny and `RFERRAM_SMOKE_TEST=1` on `rferram-server` and `rferram-ui`, but skips `cargo test` and has no package signing or notarization | R9, R12 |
-| docs accuracy | Stub | `README.md:17-53` claims zero-copy GPU capture/encode/render, Opus audio, and snapshot file sync that are stubs in `crates/*`; `AGENTS.md:3, 6` and `.agents/skills/*` reference nonexistent `/home/theinfomoose/Documents/...` paths; `CONTRIBUTING.md:37-40, 57` diverges from workspace rules | R11, R12 |
+| docs accuracy | Stub | `README.md:17-53` claims zero-copy GPU capture/encode/render, Opus audio, and snapshot file sync that are stubs in `crates/*`; `AGENTS.md:3, 6` and `.agents/skills/*` reference nonexistent `<out-of-repo path>` paths; `CONTRIBUTING.md:37-40, 57` diverges from workspace rules | R11, R12 |
 
 ## README claims
 | README.md Claim (`file:line`) | Status | Code Reality & Audit Evidence |
@@ -46,11 +46,11 @@ Tracked files (excluding `vendor/libcosmic`, `docs/audit`, `Cargo.lock`, and bin
 | `vendor/ST_Rust_Age/simply-transfer-core/src/firewall.rs:557-558, 570, 578-579, 584, 587, 597, 600, 607` | `"10.88.0.2"`, `"10.88.0.1"`, `"10.88.0.0"` | IPv4 (RFC 1918) | Vendored WireGuard unit tests use non-reserved RFC 1918 addresses alongside `203.0.113.10`. |
 | `vendor/ST_Rust_Age/simply-transfer-core/src/registry.rs:237, 247-248, 253` | `"10.0.0.15"`, `"10.99.0.2/24"`, `"1.1.1.1"` | IPv4 (RFC 1918 / Public DNS) | Vendored registry tests use private IPs and public resolver `1.1.1.1`. |
 | `vendor/ST_Rust_Age/simply-transfer-crypto/src/keys.rs:248-249, 256, 265-266, 279` | `"10.66.66.2"`, `"10.66.66.1"`, `"192.168.10.0/24"`, `"1.1.1.1"` | IPv4 (RFC 1918 / Public DNS) | Vendored WireGuard config parser tests use non-reserved private IPs and `1.1.1.1`. |
-| `AGENTS.md:3, 6, 19` | `/srv/devshare/rFerram`, `/home/theinfomoose/Documents/rFerram/...` | Host paths & username | Embeds the developer's local Linux username (`theinfomoose`) and shared mount path (`/srv/devshare/rFerram`), and links to a missing directory (`DevDocumentation`). |
+| `AGENTS.md:3, 6, 19` | `/srv/devshare/rFerram`, `<out-of-repo path>` | Host paths & username | Embeds the developer's local Linux username (`<user>`) and shared mount path (`/srv/devshare/rFerram`), and links to a missing directory (`DevDocumentation`). |
 | `.agents/skills/rferram-quality-gate/scripts/verify-crate.sh:4` | `WORKSPACE_DIR="/srv/devshare/rFerram"` | Host path | Hardcodes the local `/srv/devshare/rFerram` mount path so the script fails on any other checkout path or CI runner. |
 | `.agents/skills/rferram-quality-gate/SKILL.md:15, 18, 24, 29`, `.agents/skills/rferram-st-channels/SKILL.md:42`, `.agents/skills/rferram-wire-and-quic/SKILL.md:46` | `/srv/devshare/rFerram/...` | Host path | Hardcodes the local `/srv/devshare/rFerram` workspace path across agent skill instructions. |
-| `.agents/skills/rferram-capture-and-compositor/SKILL.md:17-18, 22, 45-46` | `/home/theinfomoose/Documents/Smithay/smithay-master.zip`, `/home/theinfomoose/Documents/Cosmic Elements/cosmic-comp-master.zip`, `/srv/devshare/rFerram/...` | Host paths & username | Embeds local user home paths and username (`theinfomoose`) pointing to external zip archives absent from the repository. |
-| `.agents/skills/rferram-cosmic-iced-ui/SKILL.md:18-20, 22-24, 75-76` | `/home/theinfomoose/Documents/rFerram/...`, `/home/theinfomoose/Documents/Cosmic Elements/...`, `/home/theinfomoose/Documents/Iced/iced-master.zip`, `/srv/devshare/rFerram/...` | Host paths & username | Embeds local user home paths and username (`theinfomoose`) pointing to missing external documentation and zip archives. |
+| `.agents/skills/rferram-capture-and-compositor/SKILL.md:17-18, 22, 45-46` | `<out-of-repo path>`, `/srv/devshare/rFerram/...` | Host paths & username | Embeds local user home paths and username (`<user>`) pointing to external zip archives absent from the repository. |
+| `.agents/skills/rferram-cosmic-iced-ui/SKILL.md:18-20, 22-24, 75-76` | `<out-of-repo path>`, `/srv/devshare/rFerram/...` | Host paths & username | Embeds local user home paths and username (`<user>`) pointing to missing external documentation and zip archives. |
 | `crates/rferram-common/src/lib.rs:117`, `crates/rferram-ui/src/lib.rs:111`, `crates/rferram-channels/src/lib.rs:114, 120, 223-224`, `crates/rferram-protocol/tests/wire_tests.rs:340-341`, `crates/rferram-server/src/daemon.rs:1048, 1078` | `"/srv/devshare"`, `"/srv/devshare/report.pdf"`, `"/srv/devshare/alpha.tar.zst"`, `"/srv/devshare/beta.sig"`, `"/srv/devshare/archive.tar.zst"`, `"/home/user/Documents/report.pdf"` | Host paths | Unit and integration test fixtures across 5 workspace crates hardcode the developer's local `/srv/devshare` mount and `/home/user` paths. |
 | `vendor/ST_Rust_Age/simply-transfer-core/src/engine.rs:1143-1210` | `"/Users/moose_dev/Dev..."`, `r"C:\Users\moose_dev\Dev..."`, `r"C:\Users\Zak\tools..."`, `"/home/zak/Remote/tools"` | Host paths & usernames | Vendored `ST_Rust_Age` test fixtures embed personal usernames (`moose_dev`, `Zak`, `zak`) and OS user paths. |
 | `vendor/ST_Rust_Age/simply-transfer-snapshots/src/lib.rs:296, 330` | `"/home/user/docs"`, `r"C:\Users\Admin\Documents"` | Host paths & usernames | Vendored snapshot volume-resolution tests use non-reserved user directory paths. |
@@ -63,7 +63,7 @@ Tracked files (excluding `vendor/libcosmic`, `docs/audit`, `Cargo.lock`, and bin
 | :--- | :--- | :--- | :--- |
 | L-REPO-1: ten tracked root files are stale copies (list each with its live counterpart and git first-commit). | Confirmed | `gitignore` (`9623548`), `rferram-workspace-Cargo.toml` (`53865b9`), `rferram-ci-workflow.yml` (`53865b9`), and 7 `rferram-*.rs` files (`53865b9`) are tracked in the repo root alongside their live counterparts in `.gitignore`, `Cargo.toml`, `.github/workflows/ci.yml`, and `crates/*/src/`. | REPO-01 |
 | L-REPO-2: every package bundles both `rferram-ui` and `rferram-server`; no lightweight destination package (R9). | Confirmed | `packaging/linux/package-linux.sh:76-77, 103-104, 172-173, 229-230`, `packaging/macos/package-macos.sh:36-37, 53-54`, `packaging/windows/package-windows.ps1:53-54`, and `packaging/windows/rferram.wxs:28-44` unconditionally package both binaries together. | REPO-02 |
-| L-REPO-3: `AGENTS.md` cites `/home/theinfomoose/Documents/rFerram/DevDocumentation` (missing); `verify-crate.sh` hardcodes `WORKSPACE_DIR`. | Confirmed | `AGENTS.md:3, 6` and `.agents/skills/rferram-{capture-and-compositor,cosmic-iced-ui}/SKILL.md` reference nonexistent `/home/theinfomoose/Documents/...` paths; `.agents/skills/rferram-quality-gate/scripts/verify-crate.sh:4` hardcodes `WORKSPACE_DIR="/srv/devshare/rFerram"`. | REPO-03 |
+| L-REPO-3: `AGENTS.md` cites `DevDocumentation` (missing); `verify-crate.sh` hardcodes `WORKSPACE_DIR`. | Confirmed | `AGENTS.md:3, 6` and `.agents/skills/rferram-{capture-and-compositor,cosmic-iced-ui}/SKILL.md` reference nonexistent `<out-of-repo path>` paths; `.agents/skills/rferram-quality-gate/scripts/verify-crate.sh:4` hardcodes `WORKSPACE_DIR="/srv/devshare/rFerram"`. | REPO-03 |
 | L-REPO-4: README claims (zero-copy hardware pipeline, Opus, VAAPI/NVENC, snapshot file sync) exceed the implementation. | Confirmed | `README.md:17-24, 45-53` and `packaging/linux/com.theinfomoose.rFerram.metainfo.xml:9-13` describe hardware capture/encode/render, Opus audio, and snapshot file sync as implemented features despite stubbed backends across `rferram-server`, `rferram-client`, `rferram-channels`, and `rferram-ui`. | REPO-04 |
 | L-REPO-5: CI tests no authenticated session and no server-client interop with the real daemon. | Confirmed | `.github/workflows/ci.yml:125-132` runs unit/mock tests (`e2e_loopback.rs` uses an in-test mock host) plus `RFERRAM_SMOKE_TEST=1` (`crates/rferram-server/src/main.rs:32-37`), which exits before `listener.accept()`; `.github/workflows/release.yml:38-289` runs no `cargo test` at all. | REPO-05 |
 | L-REPO-6: which user and privileges the systemd unit / launchd plist / MSI service run with. | Confirmed | `packaging/linux/rferram-server.service:6-13` runs as `root` with `AmbientCapabilities=CAP_NET_RAW CAP_SYS_ADMIN` and `RFERRAM_BIND_ADDR=0.0.0.0:4433`; `packaging/macos/com.theinfomoose.rferram-server.plist:4-20` omits `UserName`, binds `0.0.0.0:4433`, and is never installed; `packaging/windows/rferram.wxs:42-44` omits `<ServiceInstall>` entirely. | REPO-06 |
@@ -106,7 +106,7 @@ Tracked files (excluding `vendor/libcosmic`, `docs/audit`, `Cargo.lock`, and bin
 - Impact: Every generated package (`.tar.gz`, `.deb`, `.rpm`, `.AppImage`, `rFerram.app`/`.dmg`, `.zip`, `.msi`) requires and ships the full viewer GUI alongside the host daemon, failing R9's requirement for a separate lightweight destination application (permissions/config setup + daemon).
 - Direction: Split packaging targets and crate binaries into the full source+destination suite and a lightweight destination-only package containing only the host daemon and setup utility.
 
-### REPO-03: `AGENTS.md`, workspace skills, and `verify-crate.sh` hardcode `/srv/devshare/rFerram` and nonexistent `/home/theinfomoose/Documents/...` paths
+### REPO-03: `AGENTS.md`, workspace skills, and `verify-crate.sh` hardcode `/srv/devshare/rFerram` and nonexistent `<out-of-repo path>` paths
 - Severity: Low
 - Category: hygiene
 - Requirement: R11
@@ -116,8 +116,8 @@ Tracked files (excluding `vendor/libcosmic`, `docs/audit`, `Cargo.lock`, and bin
   TARGET_CRATE="${1:---all}"
   cd "${WORKSPACE_DIR}"
   ```
-- Confidence: Ran (`ls -la /home/theinfomoose/Documents/rFerram/DevDocumentation`)
-- Impact: `verify-crate.sh` fails if the repository is cloned outside `/srv/devshare/rFerram`, and `AGENTS.md:6` plus `.agents/skills/rferram-{capture-and-compositor,cosmic-iced-ui}/SKILL.md` instruct agents to read files under `/home/theinfomoose/Documents/...` that do not exist on disk or in git.
+- Confidence: Ran (`ls -la DevDocumentation`)
+- Impact: `verify-crate.sh` fails if the repository is cloned outside `/srv/devshare/rFerram`, and `AGENTS.md:6` plus `.agents/skills/rferram-{capture-and-compositor,cosmic-iced-ui}/SKILL.md` instruct agents to read files under `<out-of-repo path>` that do not exist on disk or in git.
 - Direction: Resolve `WORKSPACE_DIR` dynamically via `git rev-parse --show-toplevel` (or `BASH_SOURCE[0]`) in `verify-crate.sh` and replace host-specific `/home/...` and `/srv/devshare/...` paths in `AGENTS.md` and `.agents/skills/` with repository-relative paths.
 
 ### REPO-04: `README.md` and Linux AppStream metadata advertise unimplemented capture, encoding, rendering, audio, and file-transfer capabilities as complete
@@ -187,7 +187,7 @@ Tracked files (excluding `vendor/libcosmic`, `docs/audit`, `Cargo.lock`, and bin
 - Impact: Forty-one occurrences across `crates/rferram-ui/src/{app,lib,modal}.rs`, `crates/rferram-net/src/socket.rs:26`, stale `rferram-{net-lib,ui-app}.rs`, and `vendor/ST_Rust_Age/simply-transfer-{core,crypto}` use RFC 1918 (`10.0.0.0/8`, `192.168.0.0/16`), RFC 6598 (`100.64.1.25`), and public (`1.1.1.1`) IPv4 literals instead of reserved test ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`).
 - Direction: Replace all non-loopback example and fixture IPv4 literals with addresses from `192.0.2.0/24` (e.g., `192.0.2.10:4433`).
 
-### SENS-02: Source tests, docs, skills, and vendored crates embed local `/srv/devshare` and `/home/theinfomoose` paths and personal usernames
+### SENS-02: Source tests, docs, skills, and vendored crates embed local `/srv/devshare` and `/home/<user>` paths and personal usernames
 - Severity: Low
 - Category: sensitive-data
 - Requirement: R11
@@ -196,7 +196,7 @@ Tracked files (excluding `vendor/libcosmic`, `docs/audit`, `Cargo.lock`, and bin
   folder_shares: vec!["/srv/devshare".to_string()],
   ```
 - Confidence: Ran (`git grep` across tracked files)
-- Impact: Tracked files across five workspace crates (`rferram-common`, `rferram-protocol`, `rferram-channels`, `rferram-server`, `rferram-ui`), `AGENTS.md`, `.agents/skills/*`, and `vendor/ST_Rust_Age` leak internal development paths (`/srv/devshare/...`, `/home/theinfomoose/...`, `/Users/moose_dev/...`, `C:\Users\Zak\...`, `/home/zak/...`) and usernames (`theinfomoose`, `moose_dev`, `Zak`, `admin`).
+- Impact: Tracked files across five workspace crates (`rferram-common`, `rferram-protocol`, `rferram-channels`, `rferram-server`, `rferram-ui`), `AGENTS.md`, `.agents/skills/*`, and `vendor/ST_Rust_Age` leak internal development paths (`/srv/devshare/...`, `/home/<user>/...`, `/Users/moose_dev/...`, `C:\Users\Zak\...`, `/home/zak/...`) and usernames (`<user>`, `moose_dev`, `Zak`, `admin`).
 - Direction: Replace all personal usernames and local host paths in tests, docs, and fixtures with `testuser` and generic relative or synthetic paths.
 
 ## Open questions for Claude
@@ -213,3 +213,5 @@ Two rows in the "Sensitive data sweep" table quote string literals that do not e
 | `vendor/ST_Rust_Age/simply-transfer-crypto/src/lib.rs:89` — `b"simply-transfer-local-key-v1:"` | The key-derivation prefix is `b"SimplyTransfer:NIST-SP-800-57:VaultKey:"` at `lib.rs:115`, hashed with `service` and `$USER` (COM-01). `:89` is the `temp_dir()` fallback directory, not the key. |
 
 Also confirmed while validating: the systemd unit has no `User=`, so it runs as root (REPO-06); `rferram-ci-workflow.yml` is byte-identical to `.github/workflows/ci.yml` (`cmp`); `release.yml` contains no `cargo test`; `rferram.wxs` has no `<ServiceInstall>`. The sweep excluded `vendor/libcosmic` per the step spec, but 09-ui-coupling (UI-04, UI-09) shows that tree is in-repo code with its own non-reserved IPs (`raster.rs:2520, 2604, 2696`, `runner.rs:1717-1733`); treat those as part of SENS-01.
+
+Redaction (2026-11-21): personal home paths quoted above were replaced with relative paths or placeholders.
