@@ -465,6 +465,27 @@ pub async fn run_host_pair(args: &PairArgs, announce: impl FnOnce(&str)) -> Resu
     }
 }
 
+/// Reads `reader` on a background thread until EOF or error (discarding all bytes), then calls
+/// `on_close` once. Used by `capture-worker` to exit when its parent closes stdin.
+#[cfg(target_os = "linux")]
+fn watch_lifeline<R: std::io::Read + Send + 'static>(
+    mut reader: R,
+    on_close: impl FnOnce() + Send + 'static,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 256];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(_) => continue,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
+        on_close();
+    })
+}
+
 /// Runs a one-shot local tool and returns the line to print.
 pub fn run_host_tool(tool: &HostTool) -> Result<String> {
     #[cfg(target_os = "linux")]
@@ -533,6 +554,11 @@ pub fn run_host_tool(tool: &HostTool) -> Result<String> {
             }
             HostTool::CaptureWorker { output } => {
                 use std::io::Write;
+
+                let _lifeline = watch_lifeline(std::io::stdin(), || {
+                    info!("capture-worker: parent closed stdin; exiting");
+                    std::process::exit(0);
+                });
 
                 let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
                     .map(PathBuf::from)
@@ -1313,5 +1339,33 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
         assert!(parse_host_args(&bad, HostOptions::default()).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_watch_lifeline_fires_on_eof() {
+        use std::io::Write;
+        use std::sync::mpsc;
+
+        let (reader, mut writer) = std::io::pipe().unwrap();
+        let (tx, rx) = mpsc::channel();
+        let handle = watch_lifeline(reader, move || {
+            let _ = tx.send(());
+        });
+
+        writer.write_all(b"hello").unwrap();
+        assert!(
+            rx.recv_timeout(Duration::from_millis(200)).is_err(),
+            "lifeline should not fire while stdin is still open"
+        );
+
+        drop(writer);
+        rx.recv_timeout(Duration::from_secs(1))
+            .expect("lifeline should fire when stdin reaches EOF");
+        handle.join().unwrap();
+        assert!(
+            rx.try_recv().is_err(),
+            "lifeline callback should fire exactly once"
+        );
     }
 }

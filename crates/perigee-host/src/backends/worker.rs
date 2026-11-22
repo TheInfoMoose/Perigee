@@ -7,9 +7,8 @@
 use std::io::{BufReader, Read};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Child, ChildStdout, Command, Stdio};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -25,6 +24,12 @@ use crate::{CaptureBackendType, CapturedFrame};
 
 /// How often the capturer re-reads logind's active session.
 const SEAT_POLL_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How long to wait for a capture worker to exit after closing its stdin lifeline.
+const WORKER_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Polling interval while waiting for a capture worker to exit.
+const WORKER_EXIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// The program and leading arguments that start a capture worker:
 /// `perigee-host capture-worker` or `perigee host capture-worker`.
@@ -53,7 +58,8 @@ impl WorkerCommand {
 
     /// Builds the worker process for `session`: its uid and gid (when they differ from ours),
     /// no supplementary groups, no ambient capabilities, a cleared environment with
-    /// `XDG_RUNTIME_DIR` set, and stdout piped for frames.
+    /// `XDG_RUNTIME_DIR` set, stdin piped as the parent's lifeline (nothing is ever written to it;
+    /// closing it tells the worker to exit), and stdout piped for frames.
     pub fn build(&self, session: &ActiveSession, output: usize) -> Command {
         let mut cmd = Command::new(&self.program);
         cmd.args(&self.prefix_args)
@@ -67,7 +73,7 @@ impl WorkerCommand {
                 "RUST_LOG",
                 std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
             )
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
         // SAFETY: geteuid only reads the calling process's credentials; it cannot fail.
@@ -138,25 +144,62 @@ pub fn read_worker_frame(reader: &mut impl Read) -> Result<CapturedFrame> {
     })
 }
 
+#[derive(Debug, Default)]
+struct StopState {
+    stopped: bool,
+    lifeline: Option<ChildStdin>,
+}
+
 /// Stops the capture worker a [`WorkerCapturer`] is running, from any thread. A session stop
-/// calls it so a capture loop blocked reading the worker's pipe gets EOF and unwinds.
+/// calls it so the capturer stays stopped and closes the worker's stdin lifeline, causing the
+/// worker to exit and its stdout pipe to reach EOF.
 #[derive(Debug, Clone)]
-pub struct WorkerStopper(Arc<AtomicU32>);
+pub struct WorkerStopper(Arc<Mutex<StopState>>);
 
 impl WorkerStopper {
-    /// Sends SIGTERM to the running worker, if any. Safe to call more than once.
+    /// Marks the capturer stopped (sticky) and closes the running worker's stdin lifeline, if any.
+    /// Safe to call from any thread, any number of times, before, during, or after a worker spawn.
     pub fn stop(&self) {
-        let pid = self.0.swap(0, Ordering::SeqCst);
-        if pid == 0 {
-            return;
-        }
-        let Ok(pid) = libc::pid_t::try_from(pid) else {
-            return;
+        let lifeline = {
+            let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            state.stopped = true;
+            state.lifeline.take()
         };
-        // SAFETY: kill takes no pointers. `pid` is our own unreaped child (WorkerCapturer only
-        // waits on it after clearing this slot), so the pid cannot have been reused.
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
+        drop(lifeline);
+    }
+}
+
+/// Waits for `child` to exit for at most [`WORKER_EXIT_TIMEOUT`] without sending any signal.
+fn wait_for_worker_exit(session: &ActiveSession, mut child: Child) {
+    let deadline = Instant::now() + WORKER_EXIT_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                info!(session = %session.id, "Stopped capture worker");
+                return;
+            }
+            Ok(None) => {
+                let now = Instant::now();
+                if now >= deadline {
+                    warn!(
+                        session = %session.id,
+                        pid = child.id(),
+                        "Capture worker did not exit after its stdin closed"
+                    );
+                    return;
+                }
+                let remaining = deadline.saturating_duration_since(now);
+                std::thread::sleep(remaining.min(WORKER_EXIT_POLL_INTERVAL));
+            }
+            Err(e) => {
+                warn!(
+                    session = %session.id,
+                    pid = child.id(),
+                    error = %e,
+                    "Capture worker did not exit after its stdin closed"
+                );
+                return;
+            }
         }
     }
 }
@@ -172,7 +215,7 @@ pub struct WorkerCapturer {
     seat: String,
     loginctl: Box<dyn LoginctlRunner + Send + Sync>,
     current: Option<(ActiveSession, Child, BufReader<ChildStdout>)>,
-    worker_pid: Arc<AtomicU32>,
+    stop_state: Arc<Mutex<StopState>>,
     last_poll: Option<Instant>,
     last_frame: CapturedFrame,
     frame_counter: u64,
@@ -197,7 +240,7 @@ impl WorkerCapturer {
             seat: "seat0".to_string(),
             loginctl,
             current: None,
-            worker_pid: Arc::new(AtomicU32::new(0)),
+            stop_state: Arc::new(Mutex::new(StopState::default())),
             last_poll: None,
             last_frame: CapturedFrame {
                 frame_index: 0,
@@ -217,12 +260,27 @@ impl WorkerCapturer {
 
     /// A handle that stops the current (and any later) worker from another thread.
     pub fn stopper(&self) -> WorkerStopper {
-        WorkerStopper(self.worker_pid.clone())
+        WorkerStopper(self.stop_state.clone())
+    }
+
+    fn is_stopped(&self) -> bool {
+        self.stop_state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .stopped
     }
 
     fn poll_seat(&mut self) -> Result<()> {
+        if self.is_stopped() {
+            self.stop_worker();
+            bail!("capture stopped");
+        }
         self.last_poll = Some(Instant::now());
         let active = query_active_session(self.loginctl.as_ref(), &self.seat)?;
+        if self.is_stopped() {
+            self.stop_worker();
+            bail!("capture stopped");
+        }
         let changed = match (&self.current, &active) {
             (Some((running, _, _)), Some(now)) => running.id != now.id,
             (None, None) => false,
@@ -233,6 +291,9 @@ impl WorkerCapturer {
         }
         self.stop_worker();
         if let Some(session) = active {
+            if self.is_stopped() {
+                bail!("capture stopped");
+            }
             info!(
                 session = %session.id,
                 user = %session.user_name,
@@ -244,22 +305,42 @@ impl WorkerCapturer {
                 .build(&session, self.output)
                 .spawn()
                 .context("failed to start the capture worker")?;
+            let stdin = child.stdin.take().context("capture worker has no stdin")?;
             let stdout = child
                 .stdout
                 .take()
                 .context("capture worker has no stdout")?;
-            self.worker_pid.store(child.id(), Ordering::SeqCst);
+            let rejected_stdin = {
+                let mut state = self.stop_state.lock().unwrap_or_else(|e| e.into_inner());
+                if state.stopped {
+                    Some(stdin)
+                } else {
+                    state.lifeline = Some(stdin);
+                    None
+                }
+            };
+            if let Some(stdin) = rejected_stdin {
+                drop(stdin);
+                drop(stdout);
+                wait_for_worker_exit(&session, child);
+                bail!("capture stopped");
+            }
             self.current = Some((session, child, BufReader::new(stdout)));
         }
         Ok(())
     }
 
     fn stop_worker(&mut self) {
-        if let Some((session, mut child, _)) = self.current.take() {
-            self.worker_pid.store(0, Ordering::SeqCst);
-            let _ = child.kill();
-            let _ = child.wait();
-            info!(session = %session.id, "Stopped capture worker");
+        let lifeline = self
+            .stop_state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .lifeline
+            .take();
+        drop(lifeline);
+        if let Some((session, child, reader)) = self.current.take() {
+            drop(reader);
+            wait_for_worker_exit(&session, child);
         }
     }
 
@@ -274,6 +355,7 @@ impl WorkerCapturer {
 
 impl Drop for WorkerCapturer {
     fn drop(&mut self) {
+        self.stopper().stop();
         self.stop_worker();
     }
 }
@@ -302,6 +384,10 @@ impl FrameCapturer for WorkerCapturer {
     }
 
     fn capture_next_frame(&mut self) -> Result<CapturedFrame> {
+        if self.is_stopped() {
+            self.stop_worker();
+            bail!("capture stopped");
+        }
         if self
             .last_poll
             .is_none_or(|at| at.elapsed() >= SEAT_POLL_INTERVAL)
@@ -315,15 +401,26 @@ impl FrameCapturer for WorkerCapturer {
         match read {
             None => {
                 std::thread::sleep(Duration::from_millis(100));
+                if self.is_stopped() {
+                    bail!("capture stopped");
+                }
                 Ok(self.repeat_last_frame())
             }
             Some((_, Ok(mut frame))) => {
+                if self.is_stopped() {
+                    self.stop_worker();
+                    bail!("capture stopped");
+                }
                 self.frame_counter += 1;
                 frame.frame_index = self.frame_counter;
                 self.last_frame = frame.clone();
                 Ok(frame)
             }
             Some((session_id, Err(e))) => {
+                if self.is_stopped() {
+                    self.stop_worker();
+                    bail!("capture stopped");
+                }
                 warn!(session = %session_id, error = %e, "Capture worker stopped; restarting at the next seat poll");
                 self.stop_worker();
                 Ok(self.repeat_last_frame())
@@ -420,28 +517,148 @@ mod tests {
         assert!(!capturer.is_live_display());
     }
 
+    struct FakeLoginctl {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+        uid: u32,
+        gid: u32,
+        runtime_dir: PathBuf,
+    }
+
+    impl FakeLoginctl {
+        fn new() -> (Self, Arc<std::sync::atomic::AtomicUsize>) {
+            // SAFETY: geteuid and getegid only read the calling process's credentials; they cannot fail.
+            let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+            let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            (
+                Self {
+                    calls: calls.clone(),
+                    uid,
+                    gid,
+                    runtime_dir: std::env::temp_dir(),
+                },
+                calls,
+            )
+        }
+    }
+
+    impl LoginctlRunner for FakeLoginctl {
+        fn run(&self, args: &[&str]) -> Result<String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match args.first().copied() {
+                Some("show-seat") => Ok("ActiveSession=c1\n".to_string()),
+                Some("show-session") => Ok(format!(
+                    "User={}\nName=testuser\nClass=user\nType=wayland\nState=active\n",
+                    self.uid
+                )),
+                Some("show-user") => Ok(format!(
+                    "GID={}\nRuntimePath={}\n",
+                    self.gid,
+                    self.runtime_dir.display()
+                )),
+                other => bail!("unexpected loginctl call: {other:?}"),
+            }
+        }
+    }
+
+    fn fake_worker_command(script: &str) -> WorkerCommand {
+        WorkerCommand {
+            program: PathBuf::from("/bin/sh"),
+            prefix_args: vec![
+                "-c".to_string(),
+                script.to_string(),
+                "fake-worker".to_string(),
+            ],
+        }
+    }
+
     #[test]
-    fn test_worker_stopper_terminates_a_blocked_reader() {
-        let mut child = Command::new("sleep")
-            .arg("30")
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut stdout = child.stdout.take().unwrap();
-        let slot = Arc::new(AtomicU32::new(child.id()));
-        let stopper = WorkerStopper(slot.clone());
-        let reader = std::thread::spawn(move || {
-            let mut buf = [0u8; 4];
-            stdout.read_exact(&mut buf).is_err()
-        });
-        std::thread::sleep(Duration::from_millis(100));
-        stopper.stop();
-        assert!(
-            reader.join().unwrap(),
-            "reader should see EOF once the child is killed"
+    fn test_worker_stop_unblocks_a_blocked_capture() {
+        let (loginctl, calls) = FakeLoginctl::new();
+        let mut capturer = WorkerCapturer::with_loginctl(
+            fake_worker_command("while IFS= read -r _; do :; done"),
+            0,
+            Box::new(loginctl),
         );
-        assert_eq!(slot.load(Ordering::SeqCst), 0);
+        let stopper = capturer.stopper();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker_thread = std::thread::spawn(move || {
+            let result = capturer.capture_next_frame();
+            let _ = tx.send((capturer, result));
+        });
+
+        std::thread::sleep(Duration::from_millis(200));
         stopper.stop();
-        let _ = child.wait();
+
+        let (mut capturer, first) = rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("capture_next_frame should unblock within 2 s of stop()");
+        worker_thread.join().unwrap();
+
+        let first_err = first.unwrap_err();
+        assert!(
+            format!("{first_err:#}").contains("capture stopped"),
+            "got: {first_err:#}"
+        );
+
+        let calls_after_first = calls.load(std::sync::atomic::Ordering::SeqCst);
+        let started = Instant::now();
+        let second_err = capturer.capture_next_frame().unwrap_err();
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "second capture_next_frame took {:?}",
+            started.elapsed()
+        );
+        assert!(
+            format!("{second_err:#}").contains("capture stopped"),
+            "got: {second_err:#}"
+        );
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            calls_after_first
+        );
+    }
+
+    #[test]
+    fn test_worker_stop_before_first_capture_spawns_nothing() {
+        let (loginctl, calls) = FakeLoginctl::new();
+        let mut capturer = WorkerCapturer::with_loginctl(
+            fake_worker_command("while IFS= read -r _; do :; done"),
+            0,
+            Box::new(loginctl),
+        );
+        capturer.stopper().stop();
+
+        let err = capturer.capture_next_frame().unwrap_err();
+        assert!(
+            format!("{err:#}").contains("capture stopped"),
+            "got: {err:#}"
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_worker_error_reaps_worker_blocked_on_write() {
+        let (loginctl, _calls) = FakeLoginctl::new();
+        let mut capturer = WorkerCapturer::with_loginctl(
+            fake_worker_command(
+                "{ while echo 0000000000000000; do :; done; } & while IFS= read -r _; do :; done; wait",
+            ),
+            0,
+            Box::new(loginctl),
+        );
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker_thread = std::thread::spawn(move || {
+            let result = capturer.capture_next_frame();
+            let _ = tx.send((capturer, result));
+        });
+
+        let (capturer, result) = rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("capture_next_frame should reap blocked writer within 3 s");
+        worker_thread.join().unwrap();
+
+        let frame = result.expect("worker read error should return repeated frame");
+        assert_eq!((frame.width, frame.height), (64, 64));
+        assert!(!capturer.is_live_display());
     }
 }
