@@ -40,6 +40,34 @@ status = "pending"
 severity = "high"
 created_at = "2026-11-21T20:44:23Z"
 
+[[items.bugs]]
+id = "BUG-0015"
+title = "Make the blocked-capture stop test able to fail on its timeout"
+status = "pending"
+severity = "medium"
+created_at = "2026-11-22T14:54:48Z"
+
+[[items.bugs]]
+id = "BUG-0016"
+title = "End a blocked --media live capture when its session stops"
+status = "pending"
+severity = "medium"
+created_at = "2026-11-22T14:54:48Z"
+
+[[items.bugs]]
+id = "BUG-0018"
+title = "Keep follow-seat sessions open through a failed seat poll"
+status = "pending"
+severity = "medium"
+created_at = "2026-11-22T14:54:49Z"
+
+[[items.bugs]]
+id = "BUG-0019"
+title = "Bound the outbound video backlog and time the real network send"
+status = "pending"
+severity = "medium"
+created_at = "2026-11-22T14:54:49Z"
+
 [[items.features]]
 id = "FEAT-0002"
 title = "Add host rate limiting, session caps and a ClientHello read timeout"

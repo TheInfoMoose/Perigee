@@ -61,6 +61,13 @@ status = "pending"
 severity = "high"
 created_at = "2026-11-21T20:22:41Z"
 
+[[items.bugs]]
+id = "BUG-0017"
+title = "Declare the acl dependency in the rpm package"
+status = "pending"
+severity = "low"
+created_at = "2026-11-22T14:54:49Z"
+
 [[items.tasks]]
 id = "TASK-0027"
 title = "Host loop + signals. POST_GATE exit 0 incl. smoke test. Diff matches MUTATION_SPEC 1–6: biased select on shutdown vs accept; shutdown_all_sessions → endpoint close → 2 s wait_idle; SIGINT/SIGTERM; default 127.0.0.1:4433; RFERRAM_BIND_INTERFACE; both service files drop 0.0.0.0; both tests assert what the spec asks"
