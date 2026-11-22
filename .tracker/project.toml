@@ -6,7 +6,7 @@ default_scope = "inbox"
 created_at = "2026-11-18T20:59:19Z"
 
 [counters]
-bug = 20
+bug = 24
 feature = 3
 task = 117
 
