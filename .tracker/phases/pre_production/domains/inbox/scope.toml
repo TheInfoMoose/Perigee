@@ -165,6 +165,6 @@ created_at = "2026-11-22T21:43:21Z"
 [[items.tasks]]
 id = "TASK-0117"
 title = "capture-worker fits frames to the 4 MiB wire budget (5BH re-split; TASK-0111)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-22T21:43:21Z"
