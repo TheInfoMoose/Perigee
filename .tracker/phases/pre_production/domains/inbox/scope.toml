@@ -151,7 +151,7 @@ created_at = "2026-11-22T21:43:21Z"
 [[items.tasks]]
 id = "TASK-0115"
 title = "Cancellable Wayland wait; --media live capture ends on session stop (BUG-0016)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-22T21:43:21Z"
 
