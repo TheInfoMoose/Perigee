@@ -391,8 +391,16 @@ impl FrameCapturer for WorkerCapturer {
         if self
             .last_poll
             .is_none_or(|at| at.elapsed() >= SEAT_POLL_INTERVAL)
+            && let Err(e) = self.poll_seat()
         {
-            self.poll_seat()?;
+            if self.is_stopped() {
+                self.stop_worker();
+                bail!("capture stopped");
+            }
+            warn!(
+                error = %format!("{e:#}"),
+                "Seat poll failed; retrying at the next poll"
+            );
         }
         let read = match self.current.as_mut() {
             None => None,
@@ -658,6 +666,40 @@ mod tests {
         worker_thread.join().unwrap();
 
         let frame = result.expect("worker read error should return repeated frame");
+        assert_eq!((frame.width, frame.height), (64, 64));
+        assert!(!capturer.is_live_display());
+    }
+
+    #[test]
+    fn test_worker_capturer_survives_failed_seat_poll() {
+        struct FailingLoginctl;
+        impl LoginctlRunner for FailingLoginctl {
+            fn run(&self, _args: &[&str]) -> Result<String> {
+                bail!("loginctl failed")
+            }
+        }
+        let command = WorkerCommand {
+            program: PathBuf::from("/nonexistent/perigee-host"),
+            prefix_args: Vec::new(),
+        };
+        let mut capturer = WorkerCapturer::with_loginctl(command, 0, Box::new(FailingLoginctl));
+        let first = capturer.capture_next_frame().unwrap();
+        let second = capturer.capture_next_frame().unwrap();
+        assert_eq!((first.width, first.height), (64, 64));
+        assert_eq!((second.width, second.height), (64, 64));
+        assert_eq!(second.frame_index, first.frame_index + 1);
+        assert!(!capturer.is_live_display());
+    }
+
+    #[test]
+    fn test_worker_capturer_survives_failed_spawn() {
+        let (loginctl, _calls) = FakeLoginctl::new();
+        let command = WorkerCommand {
+            program: PathBuf::from("/nonexistent/perigee-host"),
+            prefix_args: Vec::new(),
+        };
+        let mut capturer = WorkerCapturer::with_loginctl(command, 0, Box::new(loginctl));
+        let frame = capturer.capture_next_frame().unwrap();
         assert_eq!((frame.width, frame.height), (64, 64));
         assert!(!capturer.is_live_display());
     }
