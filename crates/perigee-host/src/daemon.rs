@@ -1545,12 +1545,12 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         session.stop();
         // The loop must not wait for the blocked capture: stop() alone ends the session.
-        tokio::time::timeout(Duration::from_secs(2), async {
+        let closed = tokio::time::timeout(Duration::from_secs(2), async {
             while rx.recv().await.is_some() {}
         })
-        .await
-        .ok();
-        assert!(!session.is_running());
+        .await;
         release.store(true, Ordering::SeqCst);
+        closed.expect("capture loop kept its sender after stop");
+        assert!(!session.is_running());
     }
 }
