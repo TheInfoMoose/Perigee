@@ -1,0 +1,20 @@
+schema_version = 2
+
+[item]
+id = "TASK-0116"
+type = "task"
+title = "Blocked-capture stop test fails on its timeout (BUG-0015)"
+status = "open"
+severity = "medium"
+scope_ref = "inbox"
+created_at = "2026-11-22T21:43:21Z"
+updated_at = "2026-11-22T21:43:21Z"
+source_ref = "STEP 6D"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+previous_fixes = []

@@ -259,7 +259,7 @@ created_at = "2026-11-21T20:59:58Z"
 
 [[items.tasks]]
 id = "TASK-0111"
-title = "capture-worker fits frames to the 4 MiB wire budget (TASK-0103 partial)"
-status = "pending"
+title = "Deferred 2026-11-21 (f58b72a): a mid-step Claude review's tracker writes failed the gate; the code matched spec. Re-issue after send timing (TASK-0103)."
+status = "closed"
 severity = "medium"
 created_at = "2026-11-21T20:59:58Z"
