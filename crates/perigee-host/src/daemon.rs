@@ -154,6 +154,8 @@ impl HostSessionEngine {
             .context("live media needs XDG_RUNTIME_DIR for its shared-memory buffer")?;
         let shm_capturer = crate::backends::WaylandShmCapturer::connect(None, &runtime_dir, 0)
             .context("failed to start Wayland capture (is WAYLAND_DISPLAY set?)")?;
+        let cancel = shm_capturer.canceller();
+        let capture_stop: CaptureStop = Arc::new(move || cancel.cancel());
         let uinput = Arc::new(
             crate::backends::UinputInjector::new(shm_capturer.width(), shm_capturer.height())
                 .context("failed to create the /dev/uinput devices")?,
@@ -166,7 +168,13 @@ impl HostSessionEngine {
         let encoder: Box<dyn VideoEncoder> =
             Box::new(crate::encoder::RawVideoEncoder::new(encoder_config));
         let injector: Arc<dyn HostInputInjector> = uinput;
-        Ok((capturer, encoder, injector, Some(screen_sink), None))
+        Ok((
+            capturer,
+            encoder,
+            injector,
+            Some(screen_sink),
+            Some(capture_stop),
+        ))
     }
 
     #[cfg(not(target_os = "linux"))]

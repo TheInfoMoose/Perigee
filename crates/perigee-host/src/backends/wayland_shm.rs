@@ -7,12 +7,12 @@
 //! DMA-BUF and multi-output capture are Phase 5b.
 
 use std::fs::{File, OpenOptions};
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::fs::FileExt;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -36,6 +36,113 @@ use crate::backends::linux_capture::FrameCapturer;
 use crate::{CaptureBackendType, CapturedFrame};
 
 static SHM_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug)]
+struct CaptureCancelInner {
+    cancelled: AtomicBool,
+    wake_fd: OwnedFd,
+}
+
+/// Handle that cancels an in-flight or future capture on a [`WaylandShmCapturer`].
+#[derive(Debug, Clone)]
+pub struct CaptureCancel {
+    inner: Arc<CaptureCancelInner>,
+}
+
+impl CaptureCancel {
+    pub(crate) fn new() -> Result<Self> {
+        // SAFETY: `eventfd` with initial value 0 and `EFD_CLOEXEC | EFD_NONBLOCK` takes no
+        // pointers and returns either a new owned file descriptor or -1 with errno set.
+        let fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error())
+                .context("failed to create eventfd for capture cancellation");
+        }
+        // SAFETY: `fd` was just returned as a valid, newly opened file descriptor by `eventfd`.
+        let wake_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        Ok(Self {
+            inner: Arc::new(CaptureCancelInner {
+                cancelled: AtomicBool::new(false),
+                wake_fd,
+            }),
+        })
+    }
+
+    /// Cancels the capturer and wakes any thread waiting for Wayland events.
+    ///
+    /// Sticky and idempotent; safe to call from any thread.
+    pub fn cancel(&self) {
+        if self.inner.cancelled.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let val: u64 = 1;
+        // SAFETY: `wake_fd` is a valid open `eventfd` owned by `self.inner` for the duration of
+        // this call, and `&val` points to 8 readable bytes as required by `eventfd(2)` writes.
+        let _ = unsafe {
+            libc::write(
+                self.inner.wake_fd.as_raw_fd(),
+                (&raw const val).cast::<libc::c_void>(),
+                std::mem::size_of::<u64>(),
+            )
+        };
+    }
+
+    /// Returns `true` once [`Self::cancel`] has been called.
+    pub fn is_cancelled(&self) -> bool {
+        self.inner.cancelled.load(Ordering::SeqCst)
+    }
+
+    fn wake_fd(&self) -> RawFd {
+        self.inner.wake_fd.as_raw_fd()
+    }
+}
+
+/// Waits until `fd` is readable (`Ok(true)`) or `cancel` is triggered (`Ok(false)`).
+///
+/// Returns `Ok(false)` immediately if `cancel` is already cancelled. Retries on `EINTR`.
+pub(crate) fn wait_readable_or_cancelled(
+    fd: BorrowedFd<'_>,
+    cancel: &CaptureCancel,
+) -> Result<bool> {
+    if cancel.is_cancelled() {
+        return Ok(false);
+    }
+    let mut fds = [
+        libc::pollfd {
+            fd: fd.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: cancel.wake_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
+    loop {
+        if cancel.is_cancelled() {
+            return Ok(false);
+        }
+        fds[0].revents = 0;
+        fds[1].revents = 0;
+        // SAFETY: `fds` is a valid 2-element array of `libc::pollfd` whose file descriptors
+        // remain open for the duration of this call (`fd` is borrowed and `cancel` owns `wake_fd`).
+        let rc = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
+        if rc < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(err).context("poll failed while waiting for Wayland events");
+        }
+        if cancel.is_cancelled() || (fds[1].revents & libc::POLLIN) != 0 {
+            return Ok(false);
+        }
+        if fds[0].revents != 0 {
+            return Ok(true);
+        }
+    }
+}
 
 /// Picks the shared-memory format to capture in, preferring formats whose memory layout is
 /// `Bgra8` (`Xrgb8888`, `Argb8888`) over `Rgba8` (`Xbgr8888`, `Abgr8888`).
@@ -210,6 +317,7 @@ pub struct WaylandShmCapturer {
     output_index: usize,
     frame_counter: u64,
     start: Instant,
+    cancel: CaptureCancel,
 }
 
 impl WaylandShmCapturer {
@@ -274,6 +382,7 @@ impl WaylandShmCapturer {
         );
         wait_for_constraints(&mut queue, &mut state)?;
         let buffer = allocate_buffer(&shm, &qh, &state, shm_dir)?;
+        let cancel = CaptureCancel::new()?;
         info!(
             output_index,
             width = buffer.width,
@@ -294,7 +403,13 @@ impl WaylandShmCapturer {
             output_index,
             frame_counter: 0,
             start: Instant::now(),
+            cancel,
         })
+    }
+
+    /// Returns a handle that cancels an in-flight or future capture on this capturer.
+    pub fn canceller(&self) -> CaptureCancel {
+        self.cancel.clone()
     }
 
     /// Width in pixels of the frames this capturer returns.
@@ -308,6 +423,9 @@ impl WaylandShmCapturer {
     }
 
     fn capture_once(&mut self) -> Result<FrameResult> {
+        if self.cancel.is_cancelled() {
+            bail!("capture cancelled");
+        }
         let queue = self
             .queue
             .get_mut()
@@ -317,12 +435,22 @@ impl WaylandShmCapturer {
         frame.attach_buffer(&self.buffer.buffer);
         frame.damage_buffer(0, 0, self.buffer.width as i32, self.buffer.height as i32);
         frame.capture();
+        let mut cancelled = false;
         while self.state.frame_result.is_none() && !self.state.stopped {
-            queue
-                .blocking_dispatch(&mut self.state)
-                .context("Wayland dispatch failed while capturing")?;
+            if !dispatch_or_cancelled(queue, &mut self.state, &self.cancel)
+                .context("Wayland dispatch failed while capturing")?
+            {
+                cancelled = true;
+                break;
+            }
         }
         frame.destroy();
+        if cancelled {
+            if let Err(err) = queue.flush() {
+                tracing::debug!(error = %err, "Wayland flush after cancelling capture failed");
+            }
+            bail!("capture cancelled");
+        }
         if self.state.stopped {
             bail!("the compositor stopped the capture session");
         }
@@ -331,6 +459,50 @@ impl WaylandShmCapturer {
             .take()
             .ok_or_else(|| anyhow!("capture ended without a result"))
     }
+}
+
+fn dispatch_or_cancelled(
+    queue: &mut EventQueue<CaptureState>,
+    state: &mut CaptureState,
+    cancel: &CaptureCancel,
+) -> Result<bool> {
+    if cancel.is_cancelled() {
+        return Ok(false);
+    }
+    if queue
+        .dispatch_pending(state)
+        .context("Wayland dispatch_pending failed")?
+        > 0
+    {
+        return Ok(true);
+    }
+    match queue.flush() {
+        Ok(()) => {}
+        Err(wayland_client::backend::WaylandError::Io(err))
+            if err.kind() == std::io::ErrorKind::WouldBlock => {}
+        Err(err) => return Err(err).context("Wayland flush failed"),
+    }
+    let Some(guard) = queue.prepare_read() else {
+        queue
+            .dispatch_pending(state)
+            .context("Wayland dispatch_pending failed")?;
+        return Ok(true);
+    };
+    let readable = wait_readable_or_cancelled(guard.connection_fd(), cancel)?;
+    if !readable {
+        drop(guard);
+        return Ok(false);
+    }
+    match guard.read() {
+        Ok(_) => {}
+        Err(wayland_client::backend::WaylandError::Io(err))
+            if err.kind() == std::io::ErrorKind::WouldBlock => {}
+        Err(err) => return Err(err).context("Wayland read failed"),
+    }
+    queue
+        .dispatch_pending(state)
+        .context("Wayland dispatch_pending failed")?;
+    Ok(true)
 }
 
 fn wait_for_constraints(
@@ -344,6 +516,24 @@ fn wait_for_constraints(
         queue
             .blocking_dispatch(state)
             .context("Wayland dispatch failed while waiting for buffer constraints")?;
+    }
+    Ok(())
+}
+
+fn wait_for_constraints_or_cancelled(
+    queue: &mut EventQueue<CaptureState>,
+    state: &mut CaptureState,
+    cancel: &CaptureCancel,
+) -> Result<()> {
+    while !state.constraints_done {
+        if state.stopped {
+            bail!("the compositor stopped the capture session before offering a buffer");
+        }
+        if !dispatch_or_cancelled(queue, state, cancel)
+            .context("Wayland dispatch failed while waiting for buffer constraints")?
+        {
+            bail!("capture cancelled");
+        }
     }
     Ok(())
 }
@@ -437,6 +627,9 @@ impl FrameCapturer for WaylandShmCapturer {
     }
 
     fn capture_next_frame(&mut self) -> Result<CapturedFrame> {
+        if self.cancel.is_cancelled() {
+            bail!("capture cancelled");
+        }
         let mut result = self.capture_once()?;
         if let FrameResult::Failed(reason) = &result
             && reason.contains("BufferConstraints")
@@ -446,7 +639,7 @@ impl FrameCapturer for WaylandShmCapturer {
                 .queue
                 .get_mut()
                 .map_err(|_| anyhow!("Wayland queue lock poisoned"))?;
-            wait_for_constraints(queue, &mut self.state)?;
+            wait_for_constraints_or_cancelled(queue, &mut self.state, &self.cancel)?;
             self.buffer = allocate_buffer(&self.shm, &self.qh, &self.state, &self.shm_dir)?;
             result = self.capture_once()?;
         }
@@ -514,6 +707,58 @@ mod tests {
         assert!(
             format!("{err:#}").contains("failed to connect to"),
             "got: {err:#}"
+        );
+    }
+
+    #[test]
+    fn test_wait_returns_false_when_cancelled() {
+        let (rx, _tx) = UnixStream::pair().expect("UnixStream::pair should succeed");
+        let cancel = CaptureCancel::new().expect("CaptureCancel::new should succeed");
+        let cancel_worker = cancel.clone();
+        let handle = std::thread::spawn(move || {
+            let started = Instant::now();
+            let res = wait_readable_or_cancelled(rx.as_fd(), &cancel_worker);
+            (res, started.elapsed())
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        cancel.cancel();
+        let (res, elapsed) = handle.join().expect("waiter thread should not panic");
+        assert!(
+            !res.expect("wait should return Ok(false)"),
+            "expected Ok(false)"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "wait took too long after cancel: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn test_wait_returns_true_when_readable() {
+        use std::io::Write;
+        let (rx, mut tx) = UnixStream::pair().expect("UnixStream::pair should succeed");
+        let cancel = CaptureCancel::new().expect("CaptureCancel::new should succeed");
+        tx.write_all(&[1u8])
+            .expect("writing one byte should succeed");
+        let readable =
+            wait_readable_or_cancelled(rx.as_fd(), &cancel).expect("wait should succeed");
+        assert!(readable, "expected Ok(true) when peer wrote a byte");
+    }
+
+    #[test]
+    fn test_wait_after_cancel_returns_immediately() {
+        let (rx, _tx) = UnixStream::pair().expect("UnixStream::pair should succeed");
+        let cancel = CaptureCancel::new().expect("CaptureCancel::new should succeed");
+        cancel.cancel();
+        assert!(cancel.is_cancelled());
+        let started = Instant::now();
+        let readable =
+            wait_readable_or_cancelled(rx.as_fd(), &cancel).expect("wait should succeed");
+        assert!(!readable, "expected Ok(false) after cancel");
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(100),
+            "wait after cancel took too long: {:?}",
+            started.elapsed()
         );
     }
 }
