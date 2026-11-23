@@ -134,6 +134,6 @@ created_at = "2026-11-21T20:59:58Z"
 [[items.tasks]]
 id = "TASK-0118"
 title = "Kill and reap hung capture workers after timeout; tighten reap test budget (BUG-0021, BUG-0022)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-23T02:14:37Z"
