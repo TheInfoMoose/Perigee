@@ -1,0 +1,20 @@
+schema_version = 2
+
+[item]
+id = "TASK-0120"
+type = "task"
+title = "Poll for POLLOUT when Wayland flush would block (BUG-0024)"
+status = "open"
+severity = "medium"
+scope_ref = "inbox"
+created_at = "2026-11-23T02:14:37Z"
+updated_at = "2026-11-23T02:14:37Z"
+source_ref = "STEP 7C"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+previous_fixes = []
