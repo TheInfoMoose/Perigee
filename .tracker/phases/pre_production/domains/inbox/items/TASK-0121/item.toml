@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0121"
 type = "task"
 title = "Bound outbound video backlog and time real network send (BUG-0019)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "inbox"
 created_at = "2026-11-23T02:14:37Z"
-updated_at = "2026-11-23T02:14:37Z"
+updated_at = "2026-11-23T02:27:47Z"
 source_ref = "STEP 7D"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 3
 iteration_count = 1
+last_timer_session = "TASK-0121@2026-11-23T02:24:18Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-23"
+commit = "0c6bc73"
+summary = "STEP 7D: Bound Outbound Video Backlog and Time Real Network Send (phased check PASS)"
