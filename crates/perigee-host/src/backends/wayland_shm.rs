@@ -97,11 +97,13 @@ impl CaptureCancel {
     }
 }
 
-/// Waits until `fd` is readable (`Ok(true)`) or `cancel` is triggered (`Ok(false)`).
+/// Waits until `fd` reports any event in `events` (`Ok(true)`) or `cancel` is triggered
+/// (`Ok(false)`).
 ///
 /// Returns `Ok(false)` immediately if `cancel` is already cancelled. Retries on `EINTR`.
-pub(crate) fn wait_readable_or_cancelled(
+pub(crate) fn wait_fd_events_or_cancelled(
     fd: BorrowedFd<'_>,
+    events: libc::c_short,
     cancel: &CaptureCancel,
 ) -> Result<bool> {
     if cancel.is_cancelled() {
@@ -110,7 +112,7 @@ pub(crate) fn wait_readable_or_cancelled(
     let mut fds = [
         libc::pollfd {
             fd: fd.as_raw_fd(),
-            events: libc::POLLIN,
+            events,
             revents: 0,
         },
         libc::pollfd {
@@ -142,6 +144,16 @@ pub(crate) fn wait_readable_or_cancelled(
             return Ok(true);
         }
     }
+}
+
+/// Waits until `fd` is readable (`Ok(true)`) or `cancel` is triggered (`Ok(false)`).
+///
+/// Returns `Ok(false)` immediately if `cancel` is already cancelled. Retries on `EINTR`.
+pub(crate) fn wait_readable_or_cancelled(
+    fd: BorrowedFd<'_>,
+    cancel: &CaptureCancel,
+) -> Result<bool> {
+    wait_fd_events_or_cancelled(fd, libc::POLLIN, cancel)
 }
 
 /// Picks the shared-memory format to capture in, preferring formats whose memory layout is
@@ -476,11 +488,18 @@ fn dispatch_or_cancelled(
     {
         return Ok(true);
     }
-    match queue.flush() {
-        Ok(()) => {}
-        Err(wayland_client::backend::WaylandError::Io(err))
-            if err.kind() == std::io::ErrorKind::WouldBlock => {}
-        Err(err) => return Err(err).context("Wayland flush failed"),
+    loop {
+        match queue.flush() {
+            Ok(()) => break,
+            Err(wayland_client::backend::WaylandError::Io(err))
+                if err.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                if !wait_fd_events_or_cancelled(queue.as_fd(), libc::POLLOUT, cancel)? {
+                    return Ok(false);
+                }
+            }
+            Err(err) => return Err(err).context("Wayland flush failed"),
+        }
     }
     let Some(guard) = queue.prepare_read() else {
         queue
@@ -759,6 +778,82 @@ mod tests {
             started.elapsed() < std::time::Duration::from_millis(100),
             "wait after cancel took too long: {:?}",
             started.elapsed()
+        );
+    }
+
+    #[test]
+    fn test_wait_fd_events_or_cancelled_pollout_and_cancel() {
+        use std::io::{Read, Write};
+        let (mut rx, mut tx) = UnixStream::pair().expect("UnixStream::pair should succeed");
+        tx.set_nonblocking(true)
+            .expect("set_nonblocking on tx should succeed");
+        rx.set_nonblocking(true)
+            .expect("set_nonblocking on rx should succeed");
+
+        let chunk = [0xABu8; 8192];
+        loop {
+            match tx.write(&chunk) {
+                Ok(0) => break,
+                Ok(_) => continue,
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(err) => panic!("unexpected write error while filling tx buffer: {err}"),
+            }
+        }
+        loop {
+            match tx.write(&[0xABu8; 1]) {
+                Ok(0) => break,
+                Ok(_) => continue,
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(err) => panic!("unexpected write error while topping off tx buffer: {err}"),
+            }
+        }
+
+        let cancel = CaptureCancel::new().expect("CaptureCancel::new should succeed");
+        let cancel_worker = cancel.clone();
+        let handle = std::thread::spawn(move || {
+            let started = Instant::now();
+            let res = wait_fd_events_or_cancelled(tx.as_fd(), libc::POLLOUT, &cancel_worker);
+            (tx, res, started.elapsed())
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        cancel.cancel();
+        let (tx, res, elapsed) = handle.join().expect("waiter thread should not panic");
+        assert!(
+            !res.expect("wait should return Ok(false) on cancel"),
+            "expected Ok(false) when cancelled while waiting for POLLOUT"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "POLLOUT wait took too long after cancel: {elapsed:?}"
+        );
+
+        let cancel2 = CaptureCancel::new().expect("CaptureCancel::new should succeed");
+        let handle = std::thread::spawn(move || {
+            let started = Instant::now();
+            let res = wait_fd_events_or_cancelled(tx.as_fd(), libc::POLLOUT, &cancel2);
+            (res, started.elapsed())
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let mut drain = [0u8; 65536];
+        loop {
+            match rx.read(&mut drain) {
+                Ok(0) => break,
+                Ok(_) => continue,
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(err) => panic!("unexpected read error while draining rx: {err}"),
+            }
+        }
+        let (res, elapsed) = handle.join().expect("waiter thread should not panic");
+        assert!(
+            res.expect("wait should return Ok(true) once peer drains rx"),
+            "expected Ok(true) once peer reads from rx"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "POLLOUT wait took too long after peer read: {elapsed:?}"
         );
     }
 }
