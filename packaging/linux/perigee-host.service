@@ -18,8 +18,9 @@ Restart=on-failure
 RestartSec=5
 # CAP_SETUID/CAP_SETGID: start each capture worker as the active session's user.
 # CAP_NET_RAW: SO_BINDTODEVICE for --interface / PERIGEE_BIND_INTERFACE.
-AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_NET_RAW
-CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_NET_RAW
+# CAP_KILL: fallback to kill hung capture workers after stdin close times out.
+AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_NET_RAW CAP_KILL
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_NET_RAW CAP_KILL
 NoNewPrivileges=yes
 
 [Install]

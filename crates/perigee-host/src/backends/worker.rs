@@ -152,7 +152,8 @@ struct StopState {
 
 /// Stops the capture worker a [`WorkerCapturer`] is running, from any thread. A session stop
 /// calls it so the capturer stays stopped and closes the worker's stdin lifeline, causing the
-/// worker to exit and its stdout pipe to reach EOF.
+/// worker to exit and its stdout pipe to reach EOF. If the worker does not exit within
+/// [`WORKER_EXIT_TIMEOUT`], `wait_for_worker_exit` falls back to `kill()` + `wait()`.
 #[derive(Debug, Clone)]
 pub struct WorkerStopper(Arc<Mutex<StopState>>);
 
@@ -169,7 +170,9 @@ impl WorkerStopper {
     }
 }
 
-/// Waits for `child` to exit for at most [`WORKER_EXIT_TIMEOUT`] without sending any signal.
+/// Waits for `child` to exit for at most [`WORKER_EXIT_TIMEOUT`] after its stdin closes; if it
+/// has not exited by then (or polling its status fails), falls back to `kill()` + `wait()` to
+/// terminate and reap it.
 fn wait_for_worker_exit(session: &ActiveSession, mut child: Child) {
     let deadline = Instant::now() + WORKER_EXIT_TIMEOUT;
     loop {
@@ -186,6 +189,8 @@ fn wait_for_worker_exit(session: &ActiveSession, mut child: Child) {
                         pid = child.id(),
                         "Capture worker did not exit after its stdin closed"
                     );
+                    let _ = child.kill();
+                    let _ = child.wait();
                     return;
                 }
                 let remaining = deadline.saturating_duration_since(now);
@@ -198,6 +203,8 @@ fn wait_for_worker_exit(session: &ActiveSession, mut child: Child) {
                     error = %e,
                     "Capture worker did not exit after its stdin closed"
                 );
+                let _ = child.kill();
+                let _ = child.wait();
                 return;
             }
         }
@@ -661,13 +668,47 @@ mod tests {
         });
 
         let (capturer, result) = rx
-            .recv_timeout(Duration::from_secs(3))
-            .expect("capture_next_frame should reap blocked writer within 3 s");
+            .recv_timeout(Duration::from_millis(1000))
+            .expect("capture_next_frame should reap blocked writer within 1000 ms");
         worker_thread.join().unwrap();
 
         let frame = result.expect("worker read error should return repeated frame");
         assert_eq!((frame.width, frame.height), (64, 64));
         assert!(!capturer.is_live_display());
+    }
+
+    #[test]
+    fn test_wait_for_worker_exit_kills_and_reaps_hung_worker() {
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("failed to spawn hung test worker");
+        let pid = child.id();
+        drop(child.stdin.take());
+        let session = ActiveSession {
+            id: "c1".to_string(),
+            uid: 1000,
+            gid: 1000,
+            user_name: "testuser".to_string(),
+            class: "user".to_string(),
+            session_type: "wayland".to_string(),
+            runtime_dir: std::env::temp_dir(),
+        };
+
+        wait_for_worker_exit(&session, child);
+
+        // SAFETY: signal 0 only checks whether `pid` exists in the process table; no signal is
+        // delivered and no pointers are passed.
+        let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        assert_eq!(rc, -1, "hung worker pid {pid} should be gone");
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH),
+            "hung worker pid {pid} should be reaped (ESRCH), not a zombie"
+        );
     }
 
     #[test]
