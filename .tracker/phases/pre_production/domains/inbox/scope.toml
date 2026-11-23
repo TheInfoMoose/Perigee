@@ -172,7 +172,7 @@ created_at = "2026-11-22T21:43:21Z"
 [[items.tasks]]
 id = "TASK-0119"
 title = "Back off repeated seat-poll failure warnings (BUG-0023)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-23T02:14:37Z"
 

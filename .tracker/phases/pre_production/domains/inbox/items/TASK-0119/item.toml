@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0119"
 type = "task"
 title = "Back off repeated seat-poll failure warnings (BUG-0023)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "inbox"
 created_at = "2026-11-23T02:14:37Z"
-updated_at = "2026-11-23T02:14:37Z"
+updated_at = "2026-11-23T02:21:32Z"
 source_ref = "STEP 7B"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 2
 iteration_count = 1
+last_timer_session = "TASK-0119@2026-11-23T02:18:58Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-23"
+commit = "9fceb06"
+summary = "STEP 7B: Back Off Repeated Seat-Poll Failure Warnings (phased check PASS)"
