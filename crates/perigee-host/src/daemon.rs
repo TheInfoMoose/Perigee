@@ -30,6 +30,9 @@ use crate::{CaptureBackendType, HostInputInjector, MediaMode, NativeInputInjecto
 /// Frames per second of live (raw-frame) media sessions.
 pub const LIVE_RAW_FPS: u32 = 10;
 
+/// Maximum number of encoded video frames buffered for outbound QUIC transmission before dropping.
+pub(crate) const MAX_OUTBOUND_VIDEO_BACKLOG: usize = 2;
+
 /// Called with the size of each frame sent to the client, so pixel-space input can be scaled.
 type ScreenSink = Arc<dyn Fn(u32, u32) + Send + Sync>;
 
@@ -227,6 +230,18 @@ impl HostSessionEngine {
 
     /// Spawns the main GPU frame capture loop and 20 ms Opus audio loopback stream.
     pub async fn run_capture_loop(&self, outgoing_tx: mpsc::Sender<WireMessage>) -> Result<()> {
+        self.run_capture_loop_with_video(outgoing_tx.clone(), outgoing_tx)
+            .await
+    }
+
+    /// Spawns the main GPU frame capture loop (sending video frames to `video_tx` with
+    /// non-blocking drop on backpressure) and the 20 ms Opus audio loopback stream on
+    /// `outgoing_tx`.
+    pub async fn run_capture_loop_with_video(
+        &self,
+        outgoing_tx: mpsc::Sender<WireMessage>,
+        video_tx: mpsc::Sender<WireMessage>,
+    ) -> Result<()> {
         info!(
             session_id = %self.session_id,
             backend = ?self.backend_type,
@@ -240,7 +255,6 @@ impl HostSessionEngine {
         let capturer = self.capturer.clone();
         let encoder = self.encoder.clone();
         let force_keyframe = self.force_keyframe_flag.clone();
-        let video_tx = outgoing_tx.clone();
         let frame_interval = self.frame_interval;
         let screen_sink = self.screen_sink.clone();
 
@@ -299,24 +313,32 @@ impl HostSessionEngine {
                             sink(sent_size.0, sent_size.1);
                         }
                         let payload_bytes = video_msg.payload.len();
-                        let send_started = Instant::now();
-                        tokio::select! {
-                            sent = video_tx.send(WireMessage::Video(video_msg)) => {
-                                if sent.is_err() {
-                                    error!("Outgoing transport channel closed; exiting capture loop");
-                                    break;
-                                }
+                        let enqueue_started = Instant::now();
+                        match video_tx.try_send(WireMessage::Video(video_msg)) {
+                            Ok(()) => {
+                                debug!(
+                                    session_id = %session_id,
+                                    capture_ms = capture_time.as_millis() as u64,
+                                    encode_ms = encode_time.as_millis() as u64,
+                                    enqueue_ms = enqueue_started.elapsed().as_millis() as u64,
+                                    payload_bytes,
+                                    "Frame timing"
+                                );
                             }
-                            _ = stop_rx.changed() => break,
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                if need_keyframe {
+                                    force_keyframe.store(true, Ordering::SeqCst);
+                                }
+                                debug!(
+                                    session_id = %session_id,
+                                    "Dropping video frame; outbound video queue full"
+                                );
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                error!("Outgoing transport channel closed; exiting capture loop");
+                                break;
+                            }
                         }
-                        debug!(
-                            session_id = %session_id,
-                            capture_ms = capture_time.as_millis() as u64,
-                            encode_ms = encode_time.as_millis() as u64,
-                            send_ms = send_started.elapsed().as_millis() as u64,
-                            payload_bytes,
-                            "Frame timing"
-                        );
                     }
                     Err(e) => {
                         error!(error = %e, "Video frame encoding failed");
@@ -653,7 +675,11 @@ impl PerigeeHostDaemon {
         }
 
         let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<WireMessage>(256);
-        if let Err(e) = session.run_capture_loop(outgoing_tx).await {
+        let (video_tx, mut video_rx) = mpsc::channel::<WireMessage>(MAX_OUTBOUND_VIDEO_BACKLOG);
+        if let Err(e) = session
+            .run_capture_loop_with_video(outgoing_tx, video_tx)
+            .await
+        {
             self.terminate_session(&session_id).await;
             return Err(e);
         }
@@ -666,6 +692,7 @@ impl PerigeeHostDaemon {
             while session_outbound.is_running() && !*stop_outbound.borrow() {
                 let maybe_msg = tokio::select! {
                     msg = outgoing_rx.recv() => msg,
+                    msg = video_rx.recv() => msg,
                     _ = stop_outbound.changed() => None,
                 };
                 let Some(msg) = maybe_msg else {
@@ -678,6 +705,20 @@ impl PerigeeHostDaemon {
                     WireMessage::Input(_)
                     | WireMessage::Control(ControlMessage::FrameAck { .. }) => {
                         conn_outbound.send_datagram(&msg)
+                    }
+                    WireMessage::Video(video) => {
+                        let send_started = Instant::now();
+                        let res = conn_outbound.send_uni_message(&msg).await;
+                        if res.is_ok() {
+                            debug!(
+                                session_id = %session_outbound.session_id,
+                                frame_id = video.frame_id,
+                                payload_bytes = video.payload.len(),
+                                net_send_ms = send_started.elapsed().as_millis() as u64,
+                                "Video frame sent"
+                            );
+                        }
+                        res
                     }
                     _ => conn_outbound.send_uni_message(&msg).await,
                 };
@@ -1551,6 +1592,71 @@ mod tests {
         .await;
         release.store(true, Ordering::SeqCst);
         closed.expect("capture loop kept its sender after stop");
+        assert!(!session.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_video_backlog_is_bounded_and_drops_excess_frames() {
+        let session = HostSessionEngine::new(
+            "bounded-video-backlog".to_string(),
+            CaptureBackendType::WaylandPipeWire,
+            EncoderConfig {
+                width: 64,
+                height: 64,
+                target_fps: 200,
+                ..EncoderConfig::default()
+            },
+        )
+        .expect("HostSessionEngine::new should succeed");
+
+        let (outgoing_tx, _outgoing_rx) = mpsc::channel::<WireMessage>(256);
+        let (video_tx, mut video_rx) = mpsc::channel::<WireMessage>(MAX_OUTBOUND_VIDEO_BACKLOG);
+
+        session
+            .run_capture_loop_with_video(outgoing_tx, video_tx)
+            .await
+            .expect("run_capture_loop_with_video should succeed");
+
+        // Wait until the bounded video channel fills without draining it.
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while video_rx.len() < MAX_OUTBOUND_VIDEO_BACKLOG {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("Timed out waiting for video backlog to fill");
+
+        // Allow several more frame intervals to elapse while video_rx stays full.
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert!(video_rx.len() <= MAX_OUTBOUND_VIDEO_BACKLOG);
+
+        // Drain the buffered frames and verify the capture loop kept running and dropped excess frames.
+        let mut drained = 0usize;
+        while video_rx.try_recv().is_ok() {
+            drained += 1;
+        }
+        assert_eq!(drained, MAX_OUTBOUND_VIDEO_BACKLOG);
+
+        let next = tokio::time::timeout(Duration::from_secs(2), video_rx.recv())
+            .await
+            .expect("Timed out waiting for video frame after draining backlog")
+            .expect("Video channel closed unexpectedly");
+        let WireMessage::Video(frame) = next else {
+            panic!("Expected WireMessage::Video, got {next:?}");
+        };
+        assert!(
+            frame.frame_id > MAX_OUTBOUND_VIDEO_BACKLOG as u64,
+            "Expected dropped frames to advance frame_id beyond {MAX_OUTBOUND_VIDEO_BACKLOG}, got {}",
+            frame.frame_id
+        );
+
+        // Stopping the session must terminate the capture loop and drop its video_tx cleanly.
+        session.stop();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while video_rx.recv().await.is_some() {}
+        })
+        .await
+        .expect("Timed out waiting for capture loop to close video channel after stop");
         assert!(!session.is_running());
     }
 }
