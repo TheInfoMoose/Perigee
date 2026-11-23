@@ -1,19 +1,35 @@
 # Written by phased-step.sh new-phase from the plan's Up Next table.
 # Regenerated every phase; edits here are lost.
-phase = "7"
+phase = "8"
 
 [[queue]]
-step = "7A"
+step = "8A"
+item = "TASK-0123"
 
 [[queue]]
-step = "7B"
+step = "8B"
+item = "TASK-0124"
 
 [[queue]]
-step = "7C"
+step = "8C"
+item = "TASK-0125"
 
 [[queue]]
-step = "7D"
+step = "8D"
+item = "TASK-0126"
 
 [[queue]]
-user = "5BI"
-title = "Re-run the service test (5R) with frame timing"
+step = "8E"
+item = "TASK-0127"
+
+[[queue]]
+step = "8F"
+item = "TASK-0128"
+
+[[queue]]
+step = "8G"
+item = "TASK-0129"
+
+[[queue]]
+user = "8H"
+title = "Live COSMIC service test (5BI) + VA-API AV1 + perigee connect --window check"

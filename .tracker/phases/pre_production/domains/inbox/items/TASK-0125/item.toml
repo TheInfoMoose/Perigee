@@ -1,0 +1,20 @@
+schema_version = 2
+
+[item]
+id = "TASK-0125"
+type = "task"
+title = "GStreamer VA-API AV1 host encoder (GstreamerAv1Encoder, vaav1enc + av1enc fallback)"
+status = "open"
+severity = "medium"
+scope_ref = "inbox"
+created_at = "2026-11-23T03:47:49Z"
+updated_at = "2026-11-23T03:47:49Z"
+source_ref = "STEP 8C"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+previous_fixes = []
