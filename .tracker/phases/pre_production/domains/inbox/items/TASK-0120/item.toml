@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0120"
 type = "task"
 title = "Poll for POLLOUT when Wayland flush would block (BUG-0024)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "inbox"
 created_at = "2026-11-23T02:14:37Z"
-updated_at = "2026-11-23T02:14:37Z"
+updated_at = "2026-11-23T02:24:18Z"
 source_ref = "STEP 7C"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 2
 iteration_count = 1
+last_timer_session = "TASK-0120@2026-11-23T02:21:32Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-23"
+commit = "0c8432d"
+summary = "STEP 7C: Poll for POLLOUT When Wayland Flush Would Block (phased check PASS)"
