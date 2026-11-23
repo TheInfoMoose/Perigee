@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use perigee_protocol::{
     MAX_WIRE_FRAME_BYTES, MonitorInfo, PixelFormat, WireMessage, decode_wire_message,
@@ -211,6 +211,12 @@ fn wait_for_worker_exit(session: &ActiveSession, mut child: Child) {
     }
 }
 
+/// Returns `true` on exponential backoff milestones (1, 2, 4, 8, ...) so repeated seat-poll
+/// failures warn without flooding the log every second.
+fn should_warn_poll_failure(consecutive_failures: u32) -> bool {
+    consecutive_failures > 0 && consecutive_failures.is_power_of_two()
+}
+
 /// Captures whichever Wayland session logind reports active on seat0, through a
 /// `capture-worker` child running as that session's user. Restarts the worker when the active
 /// session changes or the worker exits (at most once per poll); while no Wayland session is
@@ -224,6 +230,7 @@ pub struct WorkerCapturer {
     current: Option<(ActiveSession, Child, BufReader<ChildStdout>)>,
     stop_state: Arc<Mutex<StopState>>,
     last_poll: Option<Instant>,
+    consecutive_poll_failures: u32,
     last_frame: CapturedFrame,
     frame_counter: u64,
     start: Instant,
@@ -249,6 +256,7 @@ impl WorkerCapturer {
             current: None,
             stop_state: Arc::new(Mutex::new(StopState::default())),
             last_poll: None,
+            consecutive_poll_failures: 0,
             last_frame: CapturedFrame {
                 frame_index: 0,
                 timestamp_us: 0,
@@ -398,16 +406,33 @@ impl FrameCapturer for WorkerCapturer {
         if self
             .last_poll
             .is_none_or(|at| at.elapsed() >= SEAT_POLL_INTERVAL)
-            && let Err(e) = self.poll_seat()
         {
-            if self.is_stopped() {
-                self.stop_worker();
-                bail!("capture stopped");
+            match self.poll_seat() {
+                Ok(()) => {
+                    self.consecutive_poll_failures = 0;
+                }
+                Err(e) => {
+                    if self.is_stopped() {
+                        self.stop_worker();
+                        bail!("capture stopped");
+                    }
+                    self.consecutive_poll_failures =
+                        self.consecutive_poll_failures.saturating_add(1);
+                    if should_warn_poll_failure(self.consecutive_poll_failures) {
+                        warn!(
+                            failures = self.consecutive_poll_failures,
+                            error = %format!("{e:#}"),
+                            "Seat poll failed; retrying at the next poll"
+                        );
+                    } else {
+                        debug!(
+                            failures = self.consecutive_poll_failures,
+                            error = %format!("{e:#}"),
+                            "Seat poll failed; retrying at the next poll"
+                        );
+                    }
+                }
             }
-            warn!(
-                error = %format!("{e:#}"),
-                "Seat poll failed; retrying at the next poll"
-            );
         }
         let read = match self.current.as_mut() {
             None => None,
@@ -743,5 +768,62 @@ mod tests {
         let frame = capturer.capture_next_frame().unwrap();
         assert_eq!((frame.width, frame.height), (64, 64));
         assert!(!capturer.is_live_display());
+    }
+
+    #[test]
+    fn test_poll_failure_backoff_resets_on_success() {
+        assert!(!should_warn_poll_failure(0));
+        for n in [1, 2, 4, 8, 16] {
+            assert!(
+                should_warn_poll_failure(n),
+                "expected should_warn_poll_failure({n}) to be true"
+            );
+        }
+        for n in [3, 5, 6, 7] {
+            assert!(
+                !should_warn_poll_failure(n),
+                "expected should_warn_poll_failure({n}) to be false"
+            );
+        }
+
+        struct FlakyLoginctl {
+            attempts: std::sync::atomic::AtomicU32,
+        }
+        impl LoginctlRunner for FlakyLoginctl {
+            fn run(&self, _args: &[&str]) -> Result<String> {
+                let attempt = self
+                    .attempts
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if attempt < 2 {
+                    bail!("loginctl failed on attempt {attempt}")
+                }
+                Ok("ActiveSession=\n".to_string())
+            }
+        }
+
+        let command = WorkerCommand {
+            program: PathBuf::from("/nonexistent/perigee-host"),
+            prefix_args: Vec::new(),
+        };
+        let mut capturer = WorkerCapturer::with_loginctl(
+            command,
+            0,
+            Box::new(FlakyLoginctl {
+                attempts: std::sync::atomic::AtomicU32::new(0),
+            }),
+        );
+
+        assert_eq!(capturer.consecutive_poll_failures, 0);
+
+        let _ = capturer.capture_next_frame().unwrap();
+        assert_eq!(capturer.consecutive_poll_failures, 1);
+
+        capturer.last_poll = None;
+        let _ = capturer.capture_next_frame().unwrap();
+        assert_eq!(capturer.consecutive_poll_failures, 2);
+
+        capturer.last_poll = None;
+        let _ = capturer.capture_next_frame().unwrap();
+        assert_eq!(capturer.consecutive_poll_failures, 0);
     }
 }
