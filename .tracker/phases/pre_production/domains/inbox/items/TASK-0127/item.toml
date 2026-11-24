@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0127"
 type = "task"
 title = "Client AV1 decoder (GstreamerAv1Decoder, VideoDecoder) wired into ClientSessionPipeline"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "inbox"
 created_at = "2026-11-23T03:47:49Z"
-updated_at = "2026-11-23T03:47:49Z"
+updated_at = "2026-11-24T04:53:10Z"
 source_ref = "STEP 8E"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 4
 iteration_count = 1
+last_timer_session = "TASK-0127@2026-11-24T04:48:22Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-24"
+commit = "b8fa786"
+summary = "STEP 8E: Client AV1 decoder (`GstreamerAv1Decoder`) wired into `ClientSessionPipeline` (phased check PASS)"
