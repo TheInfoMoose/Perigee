@@ -34,7 +34,10 @@ pub use macos::{
     map_scancode_to_macos_keycode, translate_input_event_to_cg, translate_modifiers_to_cg_flags,
 };
 #[cfg(target_os = "linux")]
-pub use uinput::{UINPUT_ABS_MAX, UinputInjector, encode_input_event, encode_uinput_user_dev};
+pub use uinput::{
+    UINPUT_ABS_MAX, UinputInjector, compute_virtual_desktop_bounds, encode_input_event,
+    encode_uinput_user_dev, map_output_pointer_to_abs, map_relative_pointer_delta,
+};
 #[cfg(target_os = "linux")]
 pub use wayland_shm::{
     CaptureCancel, WaylandShmCapturer, pick_shm_format, shm_format_to_pixel_format,

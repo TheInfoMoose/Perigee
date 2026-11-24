@@ -253,6 +253,11 @@ impl HostSessionEngine {
             crate::backends::UinputInjector::new(shm_capturer.width(), shm_capturer.height())
                 .context("failed to create the /dev/uinput devices")?,
         );
+        if let Ok(monitors) = shm_capturer.enumerate_monitors()
+            && !monitors.is_empty()
+        {
+            uinput.set_output_layout(monitors, output_index as u32 + 1);
+        }
         let sink_target = uinput.clone();
         let screen_sink: ScreenSink = Arc::new(move |width, height| {
             sink_target.set_screen_size(width, height);

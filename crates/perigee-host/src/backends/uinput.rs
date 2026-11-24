@@ -10,12 +10,13 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::fd::AsRawFd;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use anyhow::{Context, Result, bail};
 use tracing::{debug, info};
 
-use perigee_protocol::{ElementState, InputEvent, WheelUnit};
+use perigee_protocol::{ElementState, InputEvent, MonitorInfo, WheelUnit};
 
 use crate::HostInputInjector;
 use crate::backends::linux_input::{
@@ -31,6 +32,8 @@ const EV_KEY: u16 = 0x01;
 const EV_REL: u16 = 0x02;
 const EV_ABS: u16 = 0x03;
 const SYN_REPORT: u16 = 0;
+const REL_X: u16 = 0x00;
+const REL_Y: u16 = 0x01;
 const REL_HWHEEL: u16 = 0x06;
 const REL_WHEEL: u16 = 0x08;
 const ABS_X: u16 = 0x00;
@@ -131,12 +134,116 @@ impl Drop for VirtualDevice {
     }
 }
 
+/// Computes the union bounding box `(min_x, min_y, total_width, total_height)` across all
+/// monitors with `width > 0 && height > 0`. Returns `None` if no valid monitors exist.
+pub fn compute_virtual_desktop_bounds(monitors: &[MonitorInfo]) -> Option<(i32, i32, u32, u32)> {
+    let mut min_x = i64::MAX;
+    let mut min_y = i64::MAX;
+    let mut max_x = i64::MIN;
+    let mut max_y = i64::MIN;
+    let mut found = false;
+
+    for monitor in monitors {
+        if monitor.width == 0 || monitor.height == 0 {
+            continue;
+        }
+        let x0 = i64::from(monitor.x);
+        let y0 = i64::from(monitor.y);
+        let x1 = x0 + i64::from(monitor.width);
+        let y1 = y0 + i64::from(monitor.height);
+        min_x = min_x.min(x0);
+        min_y = min_y.min(y0);
+        max_x = max_x.max(x1);
+        max_y = max_y.max(y1);
+        found = true;
+    }
+
+    if !found {
+        return None;
+    }
+
+    let total_width = u32::try_from(max_x - min_x).ok()?;
+    let total_height = u32::try_from(max_y - min_y).ok()?;
+    if total_width == 0 || total_height == 0 {
+        return None;
+    }
+    let origin_x = i32::try_from(min_x).ok()?;
+    let origin_y = i32::try_from(min_y).ok()?;
+    Some((origin_x, origin_y, total_width, total_height))
+}
+
+/// Maps output-local pointer coordinates `(x, y)` on `target` into `0..=UINPUT_ABS_MAX`
+/// across the union bounding box of `monitors`.
+///
+/// Coordinates in `0.0..=1.0` are treated as normalized output-local coordinates; otherwise
+/// they are treated as pixel coordinates within `target.width x target.height` and clamped
+/// to `[0.0, 1.0]`.
+pub fn map_output_pointer_to_abs(
+    x: f64,
+    y: f64,
+    target: &MonitorInfo,
+    monitors: &[MonitorInfo],
+) -> Result<(i32, i32)> {
+    if !x.is_finite() || !y.is_finite() {
+        bail!("non-finite pointer coordinates: ({x}, {y})");
+    }
+    if target.width == 0 || target.height == 0 {
+        bail!(
+            "invalid target monitor dimensions: {}x{}",
+            target.width,
+            target.height
+        );
+    }
+    let Some((min_x, min_y, total_width, total_height)) = compute_virtual_desktop_bounds(monitors)
+    else {
+        bail!("no valid monitors for virtual desktop bounds");
+    };
+
+    let (norm_x, norm_y) = if (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y) {
+        (x, y)
+    } else {
+        (
+            (x / f64::from(target.width)).clamp(0.0, 1.0),
+            (y / f64::from(target.height)).clamp(0.0, 1.0),
+        )
+    };
+
+    let global_x = f64::from(target.x) + norm_x * f64::from(target.width);
+    let global_y = f64::from(target.y) + norm_y * f64::from(target.height);
+    let desktop_norm_x = ((global_x - f64::from(min_x)) / f64::from(total_width)).clamp(0.0, 1.0);
+    let desktop_norm_y = ((global_y - f64::from(min_y)) / f64::from(total_height)).clamp(0.0, 1.0);
+
+    let abs_x = (desktop_norm_x * f64::from(UINPUT_ABS_MAX)).round() as i32;
+    let abs_y = (desktop_norm_y * f64::from(UINPUT_ABS_MAX)).round() as i32;
+    Ok((
+        abs_x.clamp(0, UINPUT_ABS_MAX),
+        abs_y.clamp(0, UINPUT_ABS_MAX),
+    ))
+}
+
+/// Validates and rounds relative pointer motion deltas `(dx, dy)` for `EV_REL` injection.
+pub fn map_relative_pointer_delta(dx: f64, dy: f64) -> Result<(i32, i32)> {
+    if !dx.is_finite() || !dy.is_finite() {
+        bail!("non-finite relative pointer delta: ({dx}, {dy})");
+    }
+    let rel_x = dx.round().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32;
+    let rel_y = dy.round().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32;
+    Ok((rel_x, rel_y))
+}
+
+#[derive(Debug, Default)]
+struct OutputLayout {
+    monitors: Vec<MonitorInfo>,
+    active_monitor_id: u32,
+}
+
 /// Real [`HostInputInjector`] backed by two `/dev/uinput` virtual devices.
 pub struct UinputInjector {
     keyboard: VirtualDevice,
     pointer: VirtualDevice,
     screen_width: AtomicU32,
     screen_height: AtomicU32,
+    output_layout: Mutex<OutputLayout>,
 }
 
 impl UinputInjector {
@@ -153,6 +260,8 @@ impl UinputInjector {
             (UI_SET_EVBIT, EV_REL),
             (UI_SET_ABSBIT, ABS_X),
             (UI_SET_ABSBIT, ABS_Y),
+            (UI_SET_RELBIT, REL_X),
+            (UI_SET_RELBIT, REL_Y),
             (UI_SET_RELBIT, REL_WHEEL),
             (UI_SET_RELBIT, REL_HWHEEL),
         ];
@@ -174,6 +283,7 @@ impl UinputInjector {
             pointer,
             screen_width: AtomicU32::new(screen_width.max(1)),
             screen_height: AtomicU32::new(screen_height.max(1)),
+            output_layout: Mutex::new(OutputLayout::default()),
         })
     }
 
@@ -182,6 +292,24 @@ impl UinputInjector {
     pub fn set_screen_size(&self, width: u32, height: u32) {
         self.screen_width.store(width.max(1), Ordering::Relaxed);
         self.screen_height.store(height.max(1), Ordering::Relaxed);
+    }
+
+    /// Stores the live multi-monitor layout and updates `screen_width`/`screen_height` from
+    /// the active monitor when present.
+    pub fn set_output_layout(&self, monitors: Vec<MonitorInfo>, active_monitor_id: u32) {
+        if let Some(active) = monitors
+            .iter()
+            .find(|m| m.monitor_id == active_monitor_id)
+            .filter(|m| m.width > 0 && m.height > 0)
+        {
+            self.set_screen_size(active.width, active.height);
+        }
+        let mut layout = self
+            .output_layout
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        layout.monitors = monitors;
+        layout.active_monitor_id = active_monitor_id;
     }
 
     fn move_to(&self, x: f64, y: f64, is_absolute: bool) -> Result<()> {
@@ -206,8 +334,56 @@ impl HostInputInjector for UinputInjector {
     fn inject_input(&self, event: &InputEvent) -> Result<()> {
         match event {
             InputEvent::MouseMove {
-                x, y, is_absolute, ..
-            } => self.move_to(*x, *y, *is_absolute),
+                monitor_id,
+                x,
+                y,
+                is_absolute,
+            } => {
+                if !*is_absolute {
+                    let (dx, dy) = map_relative_pointer_delta(*x, *y)?;
+                    let mut events = Vec::with_capacity(2);
+                    if dx != 0 {
+                        events.push((EV_REL, REL_X, dx));
+                    }
+                    if dy != 0 {
+                        events.push((EV_REL, REL_Y, dy));
+                    }
+                    if events.is_empty() {
+                        return Ok(());
+                    }
+                    return self.pointer.emit(&events);
+                }
+
+                let mapped_abs = {
+                    let layout = self
+                        .output_layout
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    if layout.monitors.len() > 1 {
+                        let target = layout
+                            .monitors
+                            .iter()
+                            .find(|m| m.monitor_id == *monitor_id)
+                            .or_else(|| {
+                                layout
+                                    .monitors
+                                    .iter()
+                                    .find(|m| m.monitor_id == layout.active_monitor_id)
+                            })
+                            .unwrap_or(&layout.monitors[0]);
+                        Some(map_output_pointer_to_abs(*x, *y, target, &layout.monitors)?)
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some((abs_x, abs_y)) = mapped_abs {
+                    self.pointer
+                        .emit(&[(EV_ABS, ABS_X, abs_x), (EV_ABS, ABS_Y, abs_y)])
+                } else {
+                    self.move_to(*x, *y, true)
+                }
+            }
             InputEvent::MouseButton { button, state, .. } => {
                 let code = mouse_button_to_evdev(*button);
                 let Ok(code) = u16::try_from(code) else {
@@ -294,5 +470,70 @@ mod tests {
         let long = encode_uinput_user_dev(&"x".repeat(100), 1, 0);
         assert_eq!(long[78], b'x');
         assert_eq!(long[79], 0);
+    }
+
+    fn make_monitor(id: u32, x: i32, y: i32, width: u32, height: u32) -> MonitorInfo {
+        MonitorInfo {
+            monitor_id: id,
+            name: format!("DP-{id}"),
+            x,
+            y,
+            width,
+            height,
+            scale_factor: 1.0,
+            refresh_rate_hz: 60,
+            is_primary: id == 1,
+        }
+    }
+
+    #[test]
+    fn test_compute_virtual_desktop_bounds_handles_negative_offsets_and_empty() {
+        assert_eq!(compute_virtual_desktop_bounds(&[]), None);
+
+        let zero_sized = vec![
+            make_monitor(1, 0, 0, 0, 1080),
+            make_monitor(2, 0, 0, 1920, 0),
+        ];
+        assert_eq!(compute_virtual_desktop_bounds(&zero_sized), None);
+
+        let side_by_side = vec![
+            make_monitor(1, -1920, 0, 1920, 1080),
+            make_monitor(2, 0, 0, 1920, 1080),
+        ];
+        assert_eq!(
+            compute_virtual_desktop_bounds(&side_by_side),
+            Some((-1920, 0, 3840, 1080))
+        );
+    }
+
+    #[test]
+    fn test_map_output_pointer_to_abs_dual_monitor_and_invalid_input() {
+        let monitors = vec![
+            make_monitor(1, 0, 0, 1920, 1080),
+            make_monitor(2, 1920, 0, 1920, 1080),
+        ];
+
+        let (x1, y1) = map_output_pointer_to_abs(0.5, 0.5, &monitors[0], &monitors).unwrap();
+        assert!((x1 - 16_384).abs() <= 1, "unexpected x1={x1}");
+        assert!((y1 - 32_768).abs() <= 1, "unexpected y1={y1}");
+
+        let (x2, y2) = map_output_pointer_to_abs(0.5, 0.5, &monitors[1], &monitors).unwrap();
+        assert!((x2 - 49_151).abs() <= 1, "unexpected x2={x2}");
+        assert!((y2 - 32_768).abs() <= 1, "unexpected y2={y2}");
+
+        // Pixel-space coordinates on monitor 2 also map to the same desktop point.
+        let (px2, py2) = map_output_pointer_to_abs(960.0, 540.0, &monitors[1], &monitors).unwrap();
+        assert_eq!((px2, py2), (x2, y2));
+
+        assert!(map_output_pointer_to_abs(f64::NAN, 0.5, &monitors[0], &monitors).is_err());
+        assert!(map_output_pointer_to_abs(0.5, f64::INFINITY, &monitors[0], &monitors).is_err());
+    }
+
+    #[test]
+    fn test_map_relative_pointer_delta_rounds_and_rejects_non_finite() {
+        assert_eq!(map_relative_pointer_delta(12.6, -4.2).unwrap(), (13, -4));
+        assert_eq!(map_relative_pointer_delta(0.0, 0.0).unwrap(), (0, 0));
+        assert!(map_relative_pointer_delta(f64::INFINITY, 0.0).is_err());
+        assert!(map_relative_pointer_delta(0.0, f64::NAN).is_err());
     }
 }
