@@ -318,7 +318,7 @@ created_at = "2026-11-24T19:30:25Z"
 [[items.tasks]]
 id = "TASK-0139"
 title = "Wire --output <INDEX> / PERIGEE_OUTPUT through HostOptions, PerigeeHostDaemon, and WorkerCapturer"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-24T19:30:25Z"
 
