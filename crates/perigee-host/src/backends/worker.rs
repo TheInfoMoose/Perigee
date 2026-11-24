@@ -170,9 +170,38 @@ impl WorkerStopper {
     }
 }
 
+/// Returns `true` when blocking `child.wait()` is safe to call after `child.kill()`:
+/// either `kill()` succeeded or returned `InvalidInput` (meaning the child had already exited).
+/// Any other error (such as `PermissionDenied` / `EPERM`) means the child may still be running,
+/// so a blocking `wait()` could hang indefinitely.
+fn should_wait_after_kill(kill_result: &std::io::Result<()>) -> bool {
+    match kill_result {
+        Ok(()) => true,
+        Err(e) => e.kind() == std::io::ErrorKind::InvalidInput,
+    }
+}
+
+/// Sends `SIGKILL` to `child` and reaps it with `wait()` only when `kill()` succeeds or reports
+/// `InvalidInput` (child already exited). On any other error (e.g., `PermissionDenied`), logs a
+/// warning and returns immediately without blocking.
+fn kill_and_reap_child(session: &ActiveSession, child: &mut Child) {
+    let kill_result = child.kill();
+    if should_wait_after_kill(&kill_result) {
+        let _ = child.wait();
+    } else if let Err(e) = kill_result {
+        warn!(
+            session = %session.id,
+            pid = child.id(),
+            error = %e,
+            "Failed to kill capture worker; skipping blocking wait"
+        );
+    }
+}
+
 /// Waits for `child` to exit for at most [`WORKER_EXIT_TIMEOUT`] after its stdin closes; if it
 /// has not exited by then (or polling its status fails), falls back to `kill()` + `wait()` to
-/// terminate and reap it.
+/// terminate and reap it. Blocking `wait()` is skipped if `kill()` fails with an error other
+/// than `InvalidInput` (for example `PermissionDenied`), avoiding an indefinite hang.
 fn wait_for_worker_exit(session: &ActiveSession, mut child: Child) {
     let deadline = Instant::now() + WORKER_EXIT_TIMEOUT;
     loop {
@@ -189,8 +218,7 @@ fn wait_for_worker_exit(session: &ActiveSession, mut child: Child) {
                         pid = child.id(),
                         "Capture worker did not exit after its stdin closed"
                     );
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    kill_and_reap_child(session, &mut child);
                     return;
                 }
                 let remaining = deadline.saturating_duration_since(now);
@@ -203,8 +231,7 @@ fn wait_for_worker_exit(session: &ActiveSession, mut child: Child) {
                     error = %e,
                     "Capture worker did not exit after its stdin closed"
                 );
-                let _ = child.kill();
-                let _ = child.wait();
+                kill_and_reap_child(session, &mut child);
                 return;
             }
         }
@@ -825,5 +852,21 @@ mod tests {
         capturer.last_poll = None;
         let _ = capturer.capture_next_frame().unwrap();
         assert_eq!(capturer.consecutive_poll_failures, 0);
+    }
+
+    #[test]
+    fn test_should_wait_after_kill_skips_wait_on_permission_denied() {
+        assert!(should_wait_after_kill(&Ok(())));
+        assert!(should_wait_after_kill(&Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "already exited",
+        ))));
+        assert!(!should_wait_after_kill(&Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "EPERM",
+        ))));
+        assert!(!should_wait_after_kill(&Err(std::io::Error::other(
+            "unexpected error",
+        ))));
     }
 }
