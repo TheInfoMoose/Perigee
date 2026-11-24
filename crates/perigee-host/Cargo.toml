@@ -28,6 +28,7 @@ uuid = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 drm-fourcc = { workspace = true }
+gbm = { workspace = true }
 libc = { workspace = true }
 wayland-client = { workspace = true }
 wayland-protocols = { workspace = true }
