@@ -305,6 +305,11 @@ impl WorkerCapturer {
         WorkerStopper(self.stop_state.clone())
     }
 
+    /// Returns the configured Wayland output index passed to `capture-worker --output`.
+    pub fn output_index(&self) -> usize {
+        self.output
+    }
+
     fn is_stopped(&self) -> bool {
         self.stop_state
             .lock()
@@ -868,5 +873,31 @@ mod tests {
         assert!(!should_wait_after_kill(&Err(std::io::Error::other(
             "unexpected error",
         ))));
+    }
+
+    #[test]
+    fn test_worker_capturer_preserves_nonzero_output_index() {
+        let command = WorkerCommand {
+            program: PathBuf::from("/usr/bin/perigee-host"),
+            prefix_args: Vec::new(),
+        };
+        let session = ActiveSession {
+            id: "c1".to_string(),
+            uid: 1000,
+            gid: 1000,
+            user_name: "testuser".to_string(),
+            class: "user".to_string(),
+            session_type: "wayland".to_string(),
+            runtime_dir: PathBuf::from("/run/user/1000"),
+        };
+        let cmd = command.build(&session, 2);
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, ["capture-worker", "--output", "2"]);
+
+        let worker = WorkerCapturer::new(command, 2);
+        assert_eq!(worker.output_index(), 2);
     }
 }

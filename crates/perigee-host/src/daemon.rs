@@ -119,13 +119,27 @@ impl HostSessionEngine {
         )
     }
 
-    /// Creates a [`HostSessionEngine`] whose capture, encoder and input follow `media` and `codec`.
+    /// Creates a [`HostSessionEngine`] whose capture, encoder and input follow `media` and `codec`,
+    /// targeting output `0`.
     pub fn with_media_and_codec(
+        session_id: String,
+        backend: CaptureBackendType,
+        encoder_config: EncoderConfig,
+        media: MediaMode,
+        codec: HostCodec,
+    ) -> Result<Self> {
+        Self::with_media_codec_and_output(session_id, backend, encoder_config, media, codec, 0)
+    }
+
+    /// Creates a [`HostSessionEngine`] whose capture, encoder and input follow `media`, `codec`,
+    /// and `output_index`.
+    pub fn with_media_codec_and_output(
         session_id: String,
         backend: CaptureBackendType,
         mut encoder_config: EncoderConfig,
         media: MediaMode,
         codec: HostCodec,
+        output_index: usize,
     ) -> Result<Self> {
         let fps = match (media, codec) {
             (MediaMode::StandIn, _) => encoder_config.target_fps,
@@ -177,8 +191,10 @@ impl HostSessionEngine {
                     Arc::new(NativeInputInjector::new(backend));
                 (capturer, encoder, injector, None, None)
             }
-            MediaMode::Live => Self::build_live_media(encoder_config, codec)?,
-            MediaMode::FollowSeat => Self::build_follow_seat_media(encoder_config, codec)?,
+            MediaMode::Live => Self::build_live_media(encoder_config, codec, output_index)?,
+            MediaMode::FollowSeat => {
+                Self::build_follow_seat_media(encoder_config, codec, output_index)?
+            }
         };
         let (stop_tx, _) = watch::channel(false);
 
@@ -218,14 +234,19 @@ impl HostSessionEngine {
         }
     }
 
-    /// Linux live media: Wayland shared-memory capture of output 0, raw or AV1 frames, uinput input.
+    /// Linux live media: Wayland shared-memory capture of `output_index`, raw or AV1 frames, uinput input.
     #[cfg(target_os = "linux")]
-    fn build_live_media(encoder_config: EncoderConfig, codec: HostCodec) -> Result<SessionMedia> {
+    fn build_live_media(
+        encoder_config: EncoderConfig,
+        codec: HostCodec,
+        output_index: usize,
+    ) -> Result<SessionMedia> {
         let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
             .map(std::path::PathBuf::from)
             .context("live media needs XDG_RUNTIME_DIR for its shared-memory buffer")?;
-        let shm_capturer = crate::backends::WaylandShmCapturer::connect(None, &runtime_dir, 0)
-            .context("failed to start Wayland capture (is WAYLAND_DISPLAY set?)")?;
+        let shm_capturer =
+            crate::backends::WaylandShmCapturer::connect(None, &runtime_dir, output_index)
+                .context("failed to start Wayland capture (is WAYLAND_DISPLAY set?)")?;
         let cancel = shm_capturer.canceller();
         let capture_stop: CaptureStop = Arc::new(move || cancel.cancel());
         let uinput = Arc::new(
@@ -249,7 +270,11 @@ impl HostSessionEngine {
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn build_live_media(_encoder_config: EncoderConfig, _codec: HostCodec) -> Result<SessionMedia> {
+    fn build_live_media(
+        _encoder_config: EncoderConfig,
+        _codec: HostCodec,
+        _output_index: usize,
+    ) -> Result<SessionMedia> {
         anyhow::bail!("live media is only implemented on Linux")
     }
 
@@ -258,9 +283,10 @@ impl HostSessionEngine {
     fn build_follow_seat_media(
         encoder_config: EncoderConfig,
         codec: HostCodec,
+        output_index: usize,
     ) -> Result<SessionMedia> {
         let command = crate::backends::WorkerCommand::current()?;
-        let worker = crate::backends::WorkerCapturer::new(command, 0);
+        let worker = crate::backends::WorkerCapturer::new(command, output_index);
         let stopper = worker.stopper();
         let capture_stop: CaptureStop = Arc::new(move || stopper.stop());
         let capturer: Box<dyn FrameCapturer> = Box::new(worker);
@@ -287,6 +313,7 @@ impl HostSessionEngine {
     fn build_follow_seat_media(
         _encoder_config: EncoderConfig,
         _codec: HostCodec,
+        _output_index: usize,
     ) -> Result<SessionMedia> {
         anyhow::bail!("follow-seat media is only implemented on Linux")
     }
@@ -595,6 +622,9 @@ pub struct PerigeeHostDaemon {
     pub media: MediaMode,
     /// Video codec for new sessions; [`HostCodec::Raw`] unless configured via [`Self::with_codec`].
     pub codec: HostCodec,
+    /// Wayland output index for live/follow-seat sessions; `0` unless configured via
+    /// [`Self::with_output_index`].
+    output_index: usize,
 }
 
 impl PerigeeHostDaemon {
@@ -616,6 +646,7 @@ impl PerigeeHostDaemon {
             client_hello_timeout: CLIENT_HELLO_TIMEOUT,
             media: MediaMode::StandIn,
             codec: HostCodec::Raw,
+            output_index: 0,
         }
     }
 
@@ -623,6 +654,17 @@ impl PerigeeHostDaemon {
     pub fn with_codec(mut self, codec: HostCodec) -> Self {
         self.codec = codec;
         self
+    }
+
+    /// Configures the Wayland output index used for newly provisioned live/follow-seat sessions.
+    pub fn with_output_index(mut self, output_index: usize) -> Self {
+        self.output_index = output_index;
+        self
+    }
+
+    /// Returns the configured Wayland output index.
+    pub fn output_index(&self) -> usize {
+        self.output_index
     }
 
     /// Auto-detects operating system backend (Wayland/COSMIC, X11 fallback, DXGI, or ScreenCaptureKit).
@@ -679,12 +721,13 @@ impl PerigeeHostDaemon {
         session_id: String,
         encoder_config: EncoderConfig,
     ) -> Result<Arc<HostSessionEngine>> {
-        let session = Arc::new(HostSessionEngine::with_media_and_codec(
+        let session = Arc::new(HostSessionEngine::with_media_codec_and_output(
             session_id,
             self.backend,
             encoder_config,
             self.media,
             self.codec,
+            self.output_index,
         )?);
         let mut sessions = self.active_sessions.lock().await;
         sessions.push(session.clone());
@@ -2126,5 +2169,21 @@ mod tests {
             }
             other => panic!("Expected WireMessage::Video, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_daemon_with_output_index_stores_selected_output() {
+        let default_daemon = PerigeeHostDaemon::new(
+            "output-default".to_string(),
+            CaptureBackendType::WaylandPipeWire,
+        );
+        assert_eq!(default_daemon.output_index(), 0);
+
+        let selected_daemon = PerigeeHostDaemon::new(
+            "output-selected".to_string(),
+            CaptureBackendType::WaylandPipeWire,
+        )
+        .with_output_index(2);
+        assert_eq!(selected_daemon.output_index(), 2);
     }
 }

@@ -61,6 +61,7 @@ Options:
                         follow-seat (Linux service: follow seat0's active session, greeter included)
   --codec <CODEC>       raw (default; uncompressed frames) or av1 (GStreamer AV1 encoder,
                         VA-API preferred with software fallback, 30 fps)
+  --output <INDEX>      Wayland output index to capture for live/follow-seat (default: 0)
   -h, --help            Print this help text and exit
   -V, --version         Print version information and exit
 
@@ -69,6 +70,7 @@ Environment variables (overridden by CLI flags):
   PERIGEE_BIND_INTERFACE  Network/VPN interface name to bind exclusively (fails closed)
   PERIGEE_CONFIG_DIR      Config directory (identity.key, trusted_clients)
   PERIGEE_CODEC           Video codec: raw (default) or av1
+  PERIGEE_OUTPUT          Wayland output index to capture (default: 0)
   PERIGEE_SMOKE_TEST      If set, exit cleanly right after binding the QUIC listener
 
 Only clients whose node key is listed in trusted_clients can connect.";
@@ -86,6 +88,8 @@ pub struct HostOptions {
     pub media: MediaMode,
     /// Video codec for sessions (`--codec`, `PERIGEE_CODEC`); [`HostCodec::Raw`] by default.
     pub codec: HostCodec,
+    /// Wayland output index to capture (`--output`, `PERIGEE_OUTPUT`); `0` by default.
+    pub output_index: usize,
 }
 
 impl Default for HostOptions {
@@ -99,6 +103,7 @@ impl Default for HostOptions {
             config_dir: None,
             media: MediaMode::StandIn,
             codec: HostCodec::Raw,
+            output_index: 0,
         }
     }
 }
@@ -113,7 +118,7 @@ fn parse_codec(value: &str) -> Result<HostCodec> {
 
 impl HostOptions {
     /// Builds [`HostOptions`] starting from [`HostOptions::default`] and applying
-    /// `PERIGEE_BIND_ADDR`, `PERIGEE_BIND_INTERFACE`, and `PERIGEE_CODEC` from `get`.
+    /// `PERIGEE_BIND_ADDR`, `PERIGEE_BIND_INTERFACE`, `PERIGEE_CODEC`, and `PERIGEE_OUTPUT` from `get`.
     pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let mut opts = Self::default();
         if let Some(raw_addr) = get("PERIGEE_BIND_ADDR") {
@@ -131,6 +136,13 @@ impl HostOptions {
         {
             opts.codec = parse_codec(&raw_codec)
                 .with_context(|| format!("invalid PERIGEE_CODEC '{raw_codec}'"))?;
+        }
+        if let Some(raw_output) = get("PERIGEE_OUTPUT")
+            && !raw_output.is_empty()
+        {
+            opts.output_index = raw_output
+                .parse()
+                .with_context(|| format!("invalid PERIGEE_OUTPUT '{raw_output}'"))?;
         }
         Ok(opts)
     }
@@ -291,6 +303,15 @@ pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand
                     .ok_or_else(|| anyhow!("--codec needs a value: raw or av1"))?;
                 opts.codec =
                     parse_codec(val).with_context(|| format!("invalid --codec '{val}'"))?;
+                i += 2;
+            }
+            "--output" => {
+                let val = slice
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow!("--output needs a value: output index"))?;
+                opts.output_index = val.parse().with_context(|| {
+                    format!("invalid --output '{val}': expected an output index")
+                })?;
                 i += 2;
             }
             other => bail!("unknown argument '{other}'; run with --help"),
@@ -712,8 +733,9 @@ pub fn bind_host(options: &HostOptions) -> Result<(Arc<PerigeeHostDaemon>, QuicS
         config_dir.join(TRUSTED_CLIENTS_FILE_NAME),
     ));
     let backend = PerigeeHostDaemon::auto_detect_backend();
-    let mut daemon =
-        PerigeeHostDaemon::new(options.node_name.clone(), backend).with_codec(options.codec);
+    let mut daemon = PerigeeHostDaemon::new(options.node_name.clone(), backend)
+        .with_codec(options.codec)
+        .with_output_index(options.output_index);
     daemon.media = options.media;
     let daemon = Arc::new(daemon);
     let listener = QuicServerListener::bind_mtls(
@@ -1011,6 +1033,7 @@ mod tests {
                 config_dir: None,
                 media: MediaMode::StandIn,
                 codec: HostCodec::Raw,
+                output_index: 0,
             })
         );
 
@@ -1395,6 +1418,45 @@ mod tests {
         assert_eq!(
             resolve_host_command(&s(&["--help"]), bad_env).unwrap(),
             HostCommand::Help
+        );
+    }
+
+    #[test]
+    fn test_parse_host_output_flag_and_env() {
+        let s = |items: &[&str]| items.iter().map(|v| (*v).to_string()).collect::<Vec<_>>();
+
+        assert_eq!(HostOptions::default().output_index, 0);
+
+        let env_two = |k: &str| (k == "PERIGEE_OUTPUT").then(|| "2".to_string());
+        let from_env = HostOptions::from_env_with(env_two).unwrap();
+        assert_eq!(from_env.output_index, 2);
+
+        let bad_env = |k: &str| (k == "PERIGEE_OUTPUT").then(|| "abc".to_string());
+        let err = HostOptions::from_env_with(bad_env).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("PERIGEE_OUTPUT"),
+            "Expected error naming PERIGEE_OUTPUT, got: {err:#}"
+        );
+
+        assert_eq!(
+            resolve_host_command(&s(&["--output", "1"]), env_two).unwrap(),
+            HostCommand::Run(HostOptions {
+                output_index: 1,
+                ..HostOptions::default()
+            })
+        );
+
+        let missing_err = parse_host_args(&s(&["--output"]), HostOptions::default()).unwrap_err();
+        assert!(
+            format!("{missing_err:#}").contains("--output"),
+            "Expected error naming --output, got: {missing_err:#}"
+        );
+
+        let invalid_err =
+            parse_host_args(&s(&["--output", "abc"]), HostOptions::default()).unwrap_err();
+        assert!(
+            format!("{invalid_err:#}").contains("--output"),
+            "Expected error naming --output, got: {invalid_err:#}"
         );
     }
 
