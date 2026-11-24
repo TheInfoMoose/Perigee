@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0126"
 type = "task"
 title = "Host --codec raw/av1 / PERIGEE_CODEC and AV1 session wiring (TASK-0103)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "inbox"
 created_at = "2026-11-23T03:47:49Z"
-updated_at = "2026-11-23T03:47:49Z"
+updated_at = "2026-11-24T04:48:22Z"
 source_ref = "STEP 8D"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 4
 iteration_count = 1
+last_timer_session = "TASK-0126@2026-11-24T04:44:02Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-24"
+commit = "12c1d2e"
+summary = "STEP 8D: Host `--codec <raw|av1>` flag and AV1 session wiring (phased check PASS)"
