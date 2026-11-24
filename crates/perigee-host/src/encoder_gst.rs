@@ -35,6 +35,7 @@ struct ActivePipeline {
     height: u32,
     pixel_format: PixelFormat,
     pipeline_frame_index: u64,
+    next_pts_ns: u64,
 }
 
 impl ActivePipeline {
@@ -107,17 +108,22 @@ impl GstreamerAv1Encoder {
         }
     }
 
+    fn fallback_to_software(&mut self, reason: &anyhow::Error) {
+        warn!(
+            error = %reason,
+            "Hardware vaav1enc failed at runtime; falling back to software av1enc"
+        );
+        self.tear_down_pipeline();
+        self.use_vaapi = false;
+    }
+
     fn build_pipeline(
         &self,
         width: u32,
         height: u32,
         pixel_format: PixelFormat,
     ) -> Result<ActivePipeline> {
-        let input_gst_format = match pixel_format {
-            PixelFormat::Bgra8 => "BGRA",
-            PixelFormat::Rgba8 => "RGBA",
-            other => bail!("unsupported input pixel format for AV1 encoder: {other:?}"),
-        };
+        let src_caps = build_src_caps(pixel_format, width, height, self.config.target_fps)?;
 
         let pipeline = gst::Pipeline::new();
 
@@ -125,15 +131,6 @@ impl GstreamerAv1Encoder {
             .name("perigee-av1-src")
             .is_live(true)
             .format(gst::Format::Time)
-            .build();
-        let src_caps = gst::Caps::builder("video/x-raw")
-            .field("format", input_gst_format)
-            .field("width", width as i32)
-            .field("height", height as i32)
-            .field(
-                "framerate",
-                gst::Fraction::new(self.config.target_fps as i32, 1),
-            )
             .build();
         appsrc.set_caps(Some(&src_caps));
 
@@ -246,6 +243,7 @@ impl GstreamerAv1Encoder {
             height,
             pixel_format,
             pipeline_frame_index: 0,
+            next_pts_ns: 0,
         })
     }
 
@@ -283,13 +281,12 @@ impl GstreamerAv1Encoder {
         let row_bytes = width * 4;
         let packed_len = row_bytes * height;
 
-        let target_fps = self.config.target_fps.max(1) as u64;
+        let target_fps = self.config.target_fps;
         let active = self.ensure_pipeline(frame.width, frame.height, frame.pixel_format)?;
 
         let frame_idx = active.pipeline_frame_index;
-        let duration_ns = 1_000_000_000u64.div_ceil(target_fps);
-        let pts =
-            gst::ClockTime::from_nseconds(frame_idx.saturating_add(1).saturating_mul(duration_ns));
+        let (pts_ns, duration_ns) = next_frame_pts_ns(active.next_pts_ns, target_fps);
+        let pts = gst::ClockTime::from_nseconds(pts_ns);
         let duration = gst::ClockTime::from_nseconds(duration_ns);
 
         if force_keyframe {
@@ -328,34 +325,65 @@ impl GstreamerAv1Encoder {
             }
         }
 
-        active
-            .appsrc
-            .push_buffer(gst_buf)
-            .map_err(|err| anyhow!("failed to push video frame to GStreamer appsrc: {err:?}"))?;
+        if let Err(err) = active.appsrc.push_buffer(gst_buf) {
+            self.tear_down_pipeline();
+            return Err(anyhow!(
+                "failed to push video frame to GStreamer appsrc: {err:?}"
+            ));
+        }
         active.pipeline_frame_index += 1;
+        active.next_pts_ns = pts_ns;
 
-        let sample = active
-            .appsink
-            .try_pull_sample(PULL_SAMPLE_TIMEOUT)
-            .ok_or_else(|| {
-                if let Some(bus_err) = poll_bus_error(&active.pipeline) {
-                    anyhow!("GStreamer AV1 encoder pipeline error: {bus_err}")
-                } else {
-                    anyhow!(
-                        "timed out waiting for encoded AV1 frame from GStreamer appsink after {}s",
-                        PULL_SAMPLE_TIMEOUT.seconds()
-                    )
-                }
-            })?;
+        let Some(sample) = active.appsink.try_pull_sample(PULL_SAMPLE_TIMEOUT) else {
+            let err = if let Some(bus_err) = poll_bus_error(&active.pipeline) {
+                anyhow!("GStreamer AV1 encoder pipeline error: {bus_err}")
+            } else {
+                anyhow!(
+                    "timed out waiting for encoded AV1 frame from GStreamer appsink after {}s",
+                    PULL_SAMPLE_TIMEOUT.seconds()
+                )
+            };
+            self.tear_down_pipeline();
+            return Err(err);
+        };
 
-        let out_buf = sample
-            .buffer()
-            .ok_or_else(|| anyhow!("GStreamer appsink sample missing buffer"))?;
+        let Some(out_buf) = sample.buffer() else {
+            self.tear_down_pipeline();
+            bail!("GStreamer appsink sample missing buffer");
+        };
         let is_keyframe = frame_idx == 0 || !out_buf.flags().contains(gst::BufferFlags::DELTA_UNIT);
-        let map = out_buf
+        let map = match out_buf
             .map_readable()
-            .context("failed to map encoded AV1 buffer readable")?;
+            .context("failed to map encoded AV1 buffer readable")
+        {
+            Ok(map) => map,
+            Err(err) => {
+                self.tear_down_pipeline();
+                return Err(err);
+            }
+        };
         let payload = map.as_slice().to_vec();
+
+        Ok((payload, is_keyframe))
+    }
+
+    fn encode_with_keyframe_retry(
+        &mut self,
+        frame: &CapturedFrame,
+        force_keyframe: bool,
+    ) -> Result<(Vec<u8>, bool)> {
+        let (mut payload, mut is_keyframe) = self.encode_once(frame, force_keyframe)?;
+
+        // Older GStreamer aom plugins (e.g. 1.22.0) ignore GstForceKeyUnit; rebuild the
+        // pipeline on demand so forced keyframes always emit a true AV1 keyframe + headers.
+        if force_keyframe && !is_keyframe {
+            debug!(
+                element = self.active_element_name(),
+                "GStreamer encoder ignored GstForceKeyUnit; rebuilding pipeline for forced keyframe"
+            );
+            self.tear_down_pipeline();
+            (payload, is_keyframe) = self.encode_once(frame, true)?;
+        }
 
         Ok((payload, is_keyframe))
     }
@@ -371,18 +399,14 @@ impl VideoEncoder for GstreamerAv1Encoder {
     fn encode(&mut self, frame: &CapturedFrame, force_keyframe: bool) -> Result<VideoFrameMessage> {
         validate_frame(frame)?;
 
-        let (mut payload, mut is_keyframe) = self.encode_once(frame, force_keyframe)?;
-
-        // Older GStreamer aom plugins (e.g. 1.22.0) ignore GstForceKeyUnit; rebuild the
-        // pipeline on demand so forced keyframes always emit a true AV1 keyframe + headers.
-        if force_keyframe && !is_keyframe {
-            debug!(
-                element = self.active_element_name(),
-                "GStreamer encoder ignored GstForceKeyUnit; rebuilding pipeline for forced keyframe"
-            );
-            self.tear_down_pipeline();
-            (payload, is_keyframe) = self.encode_once(frame, true)?;
-        }
+        let (payload, is_keyframe) = match self.encode_with_keyframe_retry(frame, force_keyframe) {
+            Ok(encoded) => encoded,
+            Err(err) if self.use_vaapi => {
+                self.fallback_to_software(&err);
+                self.encode_with_keyframe_retry(frame, force_keyframe)?
+            }
+            Err(err) => return Err(err),
+        };
 
         self.frame_counter += 1;
 
@@ -421,6 +445,11 @@ impl VideoEncoder for GstreamerAv1Encoder {
             bail!("target_fps must be non-zero");
         }
         self.config.target_fps = target_fps;
+        if let Some(active) = &self.active {
+            let src_caps =
+                build_src_caps(active.pixel_format, active.width, active.height, target_fps)?;
+            active.appsrc.set_caps(Some(&src_caps));
+        }
         debug!(
             target_fps,
             element = self.active_element_name(),
@@ -428,6 +457,31 @@ impl VideoEncoder for GstreamerAv1Encoder {
         );
         Ok(())
     }
+}
+
+fn next_frame_pts_ns(current_pts_ns: u64, target_fps: u32) -> (u64, u64) {
+    let duration_ns = 1_000_000_000u64.div_ceil(target_fps.max(1) as u64);
+    let pts_ns = current_pts_ns.saturating_add(duration_ns);
+    (pts_ns, duration_ns)
+}
+
+fn build_src_caps(
+    pixel_format: PixelFormat,
+    width: u32,
+    height: u32,
+    target_fps: u32,
+) -> Result<gst::Caps> {
+    let input_gst_format = match pixel_format {
+        PixelFormat::Bgra8 => "BGRA",
+        PixelFormat::Rgba8 => "RGBA",
+        other => bail!("unsupported input pixel format for AV1 encoder: {other:?}"),
+    };
+    Ok(gst::Caps::builder("video/x-raw")
+        .field("format", input_gst_format)
+        .field("width", width as i32)
+        .field("height", height as i32)
+        .field("framerate", gst::Fraction::new(target_fps as i32, 1))
+        .build())
 }
 
 fn validate_frame(frame: &CapturedFrame) -> Result<()> {
@@ -670,5 +724,127 @@ mod tests {
         encoder
             .update_framerate(60)
             .expect("non-zero framerate update should succeed");
+    }
+
+    #[test]
+    fn test_gstreamer_av1_encoder_falls_back_to_software_and_recovers_after_error() {
+        let mut encoder = GstreamerAv1Encoder::new(EncoderConfig {
+            codec: VideoCodec::AV1,
+            width: 128,
+            height: 128,
+            target_fps: 30,
+            target_bitrate_kbps: 1000,
+            enable_hardware_accel: false,
+            keyframe_interval: 60,
+        })
+        .expect("GstreamerAv1Encoder::new should succeed");
+
+        encoder.use_vaapi = true;
+        encoder.fallback_to_software(&anyhow!("simulated vaav1enc failure"));
+        assert_eq!(encoder.active_element_name(), "av1enc");
+
+        let frame = synthetic_bgra_frame(1, 128, 128, 128 * 4, 7);
+        let msg = encoder
+            .encode(&frame, true)
+            .expect("software fallback encode should succeed");
+        assert_eq!(msg.codec, VideoCodec::AV1);
+        assert!(!msg.payload.is_empty());
+        assert!(msg.is_keyframe);
+        assert!(encoder.active.is_some());
+
+        encoder
+            .active
+            .as_ref()
+            .expect("active pipeline should exist")
+            .appsrc
+            .end_of_stream()
+            .expect("end_of_stream should succeed");
+
+        let fault_err = encoder.encode(&frame, false);
+        assert!(fault_err.is_err(), "encode on faulted pipeline should fail");
+        assert!(
+            encoder.active.is_none(),
+            "failed encode should tear down active pipeline"
+        );
+
+        let recovered = encoder
+            .encode(&frame, true)
+            .expect("subsequent encode should rebuild pipeline and succeed");
+        assert_eq!(recovered.codec, VideoCodec::AV1);
+        assert!(!recovered.payload.is_empty());
+        assert!(recovered.is_keyframe);
+        assert!(encoder.active.is_some());
+    }
+
+    #[test]
+    fn test_gstreamer_av1_encoder_pts_is_monotonic_across_framerate_increase() {
+        let (pts1, dur1) = next_frame_pts_ns(0, 30);
+        let (pts2, dur2) = next_frame_pts_ns(pts1, 30);
+        let (pts3, dur3) = next_frame_pts_ns(pts2, 60);
+        let (pts4, dur4) = next_frame_pts_ns(pts3, 60);
+        assert!(pts1 > 0 && dur1 > 0);
+        assert!(pts2 > pts1 && dur2 == dur1);
+        assert!(pts3 > pts2 && dur3 > 0 && dur3 < dur1);
+        assert!(pts4 > pts3 && dur4 == dur3);
+
+        let mut encoder = GstreamerAv1Encoder::new(EncoderConfig {
+            codec: VideoCodec::AV1,
+            width: 128,
+            height: 128,
+            target_fps: 30,
+            target_bitrate_kbps: 1000,
+            enable_hardware_accel: false,
+            keyframe_interval: 60,
+        })
+        .expect("GstreamerAv1Encoder::new should succeed");
+
+        let f1 = synthetic_bgra_frame(1, 128, 128, 128 * 4, 11);
+        let f2 = synthetic_bgra_frame(2, 128, 128, 128 * 4, 12);
+        let f3 = synthetic_bgra_frame(3, 128, 128, 128 * 4, 13);
+        let f4 = synthetic_bgra_frame(4, 128, 128, 128 * 4, 14);
+
+        encoder
+            .encode(&f1, true)
+            .expect("frame 1 at 30 fps should encode");
+        let pts_after_1 = encoder
+            .active
+            .as_ref()
+            .expect("active pipeline should exist")
+            .next_pts_ns;
+        assert!(pts_after_1 > 0);
+
+        encoder
+            .encode(&f2, false)
+            .expect("frame 2 at 30 fps should encode");
+        let pts_after_2 = encoder
+            .active
+            .as_ref()
+            .expect("active pipeline should exist")
+            .next_pts_ns;
+        assert!(pts_after_2 > pts_after_1);
+
+        encoder
+            .update_framerate(60)
+            .expect("update_framerate(60) should succeed");
+
+        encoder
+            .encode(&f3, false)
+            .expect("frame 3 at 60 fps should encode");
+        let pts_after_3 = encoder
+            .active
+            .as_ref()
+            .expect("active pipeline should exist")
+            .next_pts_ns;
+        assert!(pts_after_3 > pts_after_2);
+
+        encoder
+            .encode(&f4, false)
+            .expect("frame 4 at 60 fps should encode");
+        let pts_after_4 = encoder
+            .active
+            .as_ref()
+            .expect("active pipeline should exist")
+            .next_pts_ns;
+        assert!(pts_after_4 > pts_after_3);
     }
 }
