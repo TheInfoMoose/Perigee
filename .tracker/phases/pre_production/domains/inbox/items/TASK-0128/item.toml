@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0128"
 type = "task"
 title = "Bare wgpu + winit viewer window (ViewerWindow / run_viewer_window)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "inbox"
 created_at = "2026-11-23T03:47:49Z"
-updated_at = "2026-11-23T03:47:49Z"
+updated_at = "2026-11-24T04:57:59Z"
 source_ref = "STEP 8F"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 4
 iteration_count = 1
+last_timer_session = "TASK-0128@2026-11-24T04:53:10Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-24"
+commit = "2aa81a0"
+summary = "STEP 8F: Bare `wgpu` + `winit` viewer window (`ViewerWindow`) (phased check PASS)"
