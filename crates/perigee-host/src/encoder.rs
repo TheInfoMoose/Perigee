@@ -8,6 +8,7 @@ use tracing::{debug, info};
 use perigee_protocol::{PixelFormat, VideoCodec, VideoFrameMessage};
 
 use crate::CapturedFrame;
+pub use crate::encoder_gst::GstreamerAv1Encoder;
 
 /// Video Encoder Configuration
 #[derive(Debug, Clone)]

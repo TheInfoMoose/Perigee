@@ -59,6 +59,9 @@ pub use encoder::{
     SoftwareVideoEncoder, VideoEncoder, fit_raw_frame,
 };
 
+pub mod encoder_gst;
+pub use encoder_gst::GstreamerAv1Encoder;
+
 pub mod ppm;
 pub use ppm::encode_ppm;
 
