@@ -25,10 +25,14 @@ use crate::backends::{
     FrameCapturer, LinuxCaptureController, MacOsScreenCaptureKitCapturer, WindowsDxgiCapturer,
 };
 use crate::encoder::{EncoderConfig, MacOsVideoToolboxEncoder, SoftwareVideoEncoder, VideoEncoder};
-use crate::{CaptureBackendType, HostInputInjector, MediaMode, NativeInputInjector};
+use crate::encoder_gst::GstreamerAv1Encoder;
+use crate::{CaptureBackendType, HostCodec, HostInputInjector, MediaMode, NativeInputInjector};
 
 /// Frames per second of live (raw-frame) media sessions.
 pub const LIVE_RAW_FPS: u32 = 10;
+
+/// Frames per second of live AV1 media sessions.
+pub const LIVE_AV1_FPS: u32 = 30;
 
 /// Maximum number of encoded video frames buffered for outbound QUIC transmission before dropping.
 pub(crate) const MAX_OUTBOUND_VIDEO_BACKLOG: usize = 2;
@@ -98,46 +102,75 @@ impl HostSessionEngine {
         Self::with_media(session_id, backend_type, encoder_config, MediaMode::StandIn)
     }
 
-    /// Creates a [`HostSessionEngine`] whose capture, encoder and input follow `media`.
+    /// Creates a [`HostSessionEngine`] whose capture, encoder and input follow `media`,
+    /// using [`HostCodec::Raw`].
     pub fn with_media(
         session_id: String,
         backend_type: CaptureBackendType,
         encoder_config: EncoderConfig,
         media: MediaMode,
     ) -> Result<Self> {
-        let fps = match media {
-            MediaMode::StandIn => encoder_config.target_fps,
-            MediaMode::Live | MediaMode::FollowSeat => LIVE_RAW_FPS,
+        Self::with_media_and_codec(
+            session_id,
+            backend_type,
+            encoder_config,
+            media,
+            HostCodec::Raw,
+        )
+    }
+
+    /// Creates a [`HostSessionEngine`] whose capture, encoder and input follow `media` and `codec`.
+    pub fn with_media_and_codec(
+        session_id: String,
+        backend: CaptureBackendType,
+        mut encoder_config: EncoderConfig,
+        media: MediaMode,
+        codec: HostCodec,
+    ) -> Result<Self> {
+        let fps = match (media, codec) {
+            (MediaMode::StandIn, _) => encoder_config.target_fps,
+            (MediaMode::Live | MediaMode::FollowSeat, HostCodec::Raw) => LIVE_RAW_FPS,
+            (MediaMode::Live | MediaMode::FollowSeat, HostCodec::Av1) => LIVE_AV1_FPS,
         };
         let frame_interval = Duration::from_nanos(1_000_000_000 / u64::from(fps.max(1)));
         let (capturer, encoder, input_injector, screen_sink, capture_stop) = match media {
             MediaMode::StandIn => {
                 let width = encoder_config.width.max(1);
                 let height = encoder_config.height.max(1);
-                let capturer = Self::build_frame_capturer(backend_type, 1, width, height)
+                let capturer = Self::build_frame_capturer(backend, 1, width, height)
                     .context("failed to start the frame capturer for this session")?;
-                let encoder: Box<dyn VideoEncoder> = match backend_type {
-                    CaptureBackendType::MacOsScreenCaptureKit => {
-                        Box::new(MacOsVideoToolboxEncoder::new(encoder_config))
+                let encoder: Box<dyn VideoEncoder> = match codec {
+                    HostCodec::Raw => {
+                        encoder_config.codec = VideoCodec::RawBgra;
+                        match backend {
+                            CaptureBackendType::MacOsScreenCaptureKit => {
+                                Box::new(MacOsVideoToolboxEncoder::new(encoder_config))
+                            }
+                            _ => Box::new(SoftwareVideoEncoder::new(encoder_config)),
+                        }
                     }
-                    _ => Box::new(SoftwareVideoEncoder::new(encoder_config)),
+                    HostCodec::Av1 => {
+                        encoder_config.codec = VideoCodec::AV1;
+                        encoder_config.enable_hardware_accel = false;
+                        Box::new(GstreamerAv1Encoder::new(encoder_config)?)
+                    }
                 };
                 let injector: Arc<dyn HostInputInjector> =
-                    Arc::new(NativeInputInjector::new(backend_type));
+                    Arc::new(NativeInputInjector::new(backend));
                 (capturer, encoder, injector, None, None)
             }
-            MediaMode::Live => Self::build_live_media(encoder_config)?,
-            MediaMode::FollowSeat => Self::build_follow_seat_media(encoder_config)?,
+            MediaMode::Live => Self::build_live_media(encoder_config, codec)?,
+            MediaMode::FollowSeat => Self::build_follow_seat_media(encoder_config, codec)?,
         };
         let (stop_tx, _) = watch::channel(false);
 
         Ok(Self {
             session_id,
-            backend_type,
+            backend_type: backend,
             capturer: Arc::new(Mutex::new(capturer)),
             encoder: Arc::new(Mutex::new(encoder)),
             input_injector,
-            audio_capturer: HostAudioCapturer::new(backend_type),
+            audio_capturer: HostAudioCapturer::new(backend),
             channel_manager: Arc::new(VirtualChannelManager::new()),
             force_keyframe_flag: Arc::new(AtomicBool::new(true)),
             last_acked_frame_id: Arc::new(AtomicU64::new(0)),
@@ -149,9 +182,27 @@ impl HostSessionEngine {
         })
     }
 
-    /// Linux live media: Wayland shared-memory capture of output 0, raw frames, uinput input.
     #[cfg(target_os = "linux")]
-    fn build_live_media(encoder_config: EncoderConfig) -> Result<SessionMedia> {
+    fn build_live_encoder(
+        mut encoder_config: EncoderConfig,
+        codec: HostCodec,
+    ) -> Result<Box<dyn VideoEncoder>> {
+        match codec {
+            HostCodec::Raw => Ok(Box::new(crate::encoder::RawVideoEncoder::new(
+                encoder_config,
+            ))),
+            HostCodec::Av1 => {
+                encoder_config.codec = VideoCodec::AV1;
+                encoder_config.enable_hardware_accel = true;
+                encoder_config.target_fps = LIVE_AV1_FPS;
+                Ok(Box::new(GstreamerAv1Encoder::new(encoder_config)?))
+            }
+        }
+    }
+
+    /// Linux live media: Wayland shared-memory capture of output 0, raw or AV1 frames, uinput input.
+    #[cfg(target_os = "linux")]
+    fn build_live_media(encoder_config: EncoderConfig, codec: HostCodec) -> Result<SessionMedia> {
         let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
             .map(std::path::PathBuf::from)
             .context("live media needs XDG_RUNTIME_DIR for its shared-memory buffer")?;
@@ -168,8 +219,7 @@ impl HostSessionEngine {
             sink_target.set_screen_size(width, height);
         });
         let capturer: Box<dyn FrameCapturer> = Box::new(shm_capturer);
-        let encoder: Box<dyn VideoEncoder> =
-            Box::new(crate::encoder::RawVideoEncoder::new(encoder_config));
+        let encoder = Self::build_live_encoder(encoder_config, codec)?;
         let injector: Arc<dyn HostInputInjector> = uinput;
         Ok((
             capturer,
@@ -181,13 +231,16 @@ impl HostSessionEngine {
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn build_live_media(_encoder_config: EncoderConfig) -> Result<SessionMedia> {
+    fn build_live_media(_encoder_config: EncoderConfig, _codec: HostCodec) -> Result<SessionMedia> {
         anyhow::bail!("live media is only implemented on Linux")
     }
 
-    /// Linux follow-seat media: a capture worker per active seat0 session, raw frames, uinput.
+    /// Linux follow-seat media: a capture worker per active seat0 session, raw or AV1 frames, uinput.
     #[cfg(target_os = "linux")]
-    fn build_follow_seat_media(encoder_config: EncoderConfig) -> Result<SessionMedia> {
+    fn build_follow_seat_media(
+        encoder_config: EncoderConfig,
+        codec: HostCodec,
+    ) -> Result<SessionMedia> {
         let command = crate::backends::WorkerCommand::current()?;
         let worker = crate::backends::WorkerCapturer::new(command, 0);
         let stopper = worker.stopper();
@@ -201,8 +254,7 @@ impl HostSessionEngine {
         let screen_sink: ScreenSink = Arc::new(move |width, height| {
             sink_target.set_screen_size(width, height);
         });
-        let encoder: Box<dyn VideoEncoder> =
-            Box::new(crate::encoder::RawVideoEncoder::new(encoder_config));
+        let encoder = Self::build_live_encoder(encoder_config, codec)?;
         let injector: Arc<dyn HostInputInjector> = uinput;
         Ok((
             capturer,
@@ -214,7 +266,10 @@ impl HostSessionEngine {
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn build_follow_seat_media(_encoder_config: EncoderConfig) -> Result<SessionMedia> {
+    fn build_follow_seat_media(
+        _encoder_config: EncoderConfig,
+        _codec: HostCodec,
+    ) -> Result<SessionMedia> {
         anyhow::bail!("follow-seat media is only implemented on Linux")
     }
 
@@ -502,6 +557,8 @@ pub struct PerigeeHostDaemon {
     pub client_hello_timeout: Duration,
     /// Media backends for new sessions; [`MediaMode::StandIn`] unless `bind_host` sets it.
     pub media: MediaMode,
+    /// Video codec for new sessions; [`HostCodec::Raw`] unless configured via [`Self::with_codec`].
+    pub codec: HostCodec,
 }
 
 impl PerigeeHostDaemon {
@@ -522,7 +579,14 @@ impl PerigeeHostDaemon {
             active_sessions: Arc::new(Mutex::new(Vec::new())),
             client_hello_timeout: CLIENT_HELLO_TIMEOUT,
             media: MediaMode::StandIn,
+            codec: HostCodec::Raw,
         }
+    }
+
+    /// Configures the video codec used for newly provisioned sessions.
+    pub fn with_codec(mut self, codec: HostCodec) -> Self {
+        self.codec = codec;
+        self
     }
 
     /// Auto-detects operating system backend (Wayland/COSMIC, X11 fallback, DXGI, or ScreenCaptureKit).
@@ -579,11 +643,12 @@ impl PerigeeHostDaemon {
         session_id: String,
         encoder_config: EncoderConfig,
     ) -> Result<Arc<HostSessionEngine>> {
-        let session = Arc::new(HostSessionEngine::with_media(
+        let session = Arc::new(HostSessionEngine::with_media_and_codec(
             session_id,
             self.backend,
             encoder_config,
             self.media,
+            self.codec,
         )?);
         let mut sessions = self.active_sessions.lock().await;
         sessions.push(session.clone());
@@ -1912,5 +1977,46 @@ mod tests {
             .expect("Timed out waiting for idle outbound pump to exit on stop")
             .expect("idle pump task panicked")
             .expect("idle pump should return Ok(())");
+    }
+
+    #[tokio::test]
+    async fn test_session_with_av1_codec_emits_av1_frames() {
+        let session = HostSessionEngine::with_media_and_codec(
+            "av1-standin-session".to_string(),
+            CaptureBackendType::WaylandPipeWire,
+            EncoderConfig {
+                width: 128,
+                height: 128,
+                target_fps: 30,
+                target_bitrate_kbps: 1000,
+                ..EncoderConfig::default()
+            },
+            MediaMode::StandIn,
+            HostCodec::Av1,
+        )
+        .expect("HostSessionEngine::with_media_and_codec should succeed with HostCodec::Av1");
+
+        let (outgoing_tx, _outgoing_rx) = mpsc::channel::<WireMessage>(32);
+        let (video_tx, mut video_rx) = mpsc::channel::<WireMessage>(8);
+        session
+            .run_capture_loop_with_video(outgoing_tx, video_tx)
+            .await
+            .expect("run_capture_loop_with_video should succeed");
+
+        let msg = tokio::time::timeout(Duration::from_secs(5), video_rx.recv())
+            .await
+            .expect("Timed out waiting for AV1 video frame")
+            .expect("Video channel closed before emitting a frame");
+
+        session.stop();
+
+        match msg {
+            WireMessage::Video(frame) => {
+                assert_eq!(frame.codec, VideoCodec::AV1);
+                assert!(!frame.payload.is_empty());
+                assert_eq!((frame.width, frame.height), (128, 128));
+            }
+            other => panic!("Expected WireMessage::Video, got {other:?}"),
+        }
     }
 }

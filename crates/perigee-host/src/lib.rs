@@ -109,6 +109,16 @@ pub enum MediaMode {
     FollowSeat,
 }
 
+/// Video codec a host session uses (`perigee-host --codec`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HostCodec {
+    /// Uncompressed raw frames (default).
+    #[default]
+    Raw,
+    /// GStreamer AV1 encoder (`vaav1enc` hardware VA-API preferred, `av1enc` software fallback).
+    Av1,
+}
+
 /// Raw Frame Buffer captured from Host GPU / Display Subsystem
 #[derive(Debug, Clone)]
 pub struct CapturedFrame {
