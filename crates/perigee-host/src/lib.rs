@@ -64,6 +64,12 @@ pub use encoder::{
 pub mod encoder_gst;
 pub use encoder_gst::GstreamerAv1Encoder;
 
+pub mod headless;
+pub use headless::{
+    DrmConnectorStatus, HeadlessProbeReport, format_headless_report, probe_headless_paths,
+    probe_headless_system,
+};
+
 pub mod ppm;
 pub use ppm::encode_ppm;
 

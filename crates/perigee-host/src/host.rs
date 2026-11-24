@@ -37,6 +37,7 @@ Usage: perigee-host [run] [OPTIONS]
        perigee-host snapshot --out <FILE.ppm> [--output <INDEX>] [--capture-mode <auto|dmabuf|shm>]
        perigee-host input-test
        perigee-host outputs
+       perigee-host headless-check
 
 Key management:
   identity              Print this host's node key (created on first use)
@@ -50,6 +51,7 @@ Live checks (Linux, run inside the Wayland session):
   snapshot              Capture one frame of output INDEX (default 0) to a PPM file
   input-test            Move the pointer to the centre, click, and type \"perigee\" via /dev/uinput
   outputs               List Wayland compositor outputs with geometry, refresh rate, and scale
+  headless-check        Inspect kernel/DRM/vkms readiness for headless operation (no root)
 
 Options:
   --bind <ADDR>         UDP socket bind address (default: 127.0.0.1:4433, loopback-only)
@@ -193,7 +195,8 @@ pub enum HostAdmin {
     },
 }
 
-/// A one-shot local tool (`perigee-host snapshot`, `perigee-host input-test`, `perigee-host outputs`).
+/// A one-shot local tool (`perigee-host snapshot`, `perigee-host input-test`,
+/// `perigee-host outputs`, `perigee-host headless-check`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostTool {
     /// Capture one frame of Wayland output `output` and write it to `out` as a PPM.
@@ -206,6 +209,8 @@ pub enum HostTool {
     InputTest,
     /// List Wayland compositor outputs with geometry, refresh rate, and scale.
     Outputs,
+    /// Inspect Linux kernel/DRM/`vkms` readiness for headless operation (no root).
+    HeadlessCheck,
     /// Internal (started by `--media follow-seat`): capture output `output` of the compositor
     /// in `XDG_RUNTIME_DIR` and stream raw frames on stdout.
     CaptureWorker {
@@ -232,6 +237,10 @@ pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand
         Some("input-test") => bail!("input-test takes no arguments"),
         Some("outputs") if args.len() == 1 => return Ok(HostCommand::Tool(HostTool::Outputs)),
         Some("outputs") => bail!("outputs takes no arguments"),
+        Some("headless-check") if args.len() == 1 => {
+            return Ok(HostCommand::Tool(HostTool::HeadlessCheck));
+        }
+        Some("headless-check") => bail!("headless-check takes no arguments"),
         Some("capture-worker") => {
             return parse_capture_worker_args(&args[1..]).map(HostCommand::Tool);
         }
@@ -679,6 +688,10 @@ pub fn run_host_tool(tool: &HostTool) -> Result<String> {
                 let monitors = crate::backends::wayland_shm::list_wayland_outputs(None)?;
                 Ok(crate::backends::wayland_shm::format_monitor_list(&monitors))
             }
+            HostTool::HeadlessCheck => {
+                let report = crate::headless::probe_headless_system();
+                Ok(crate::headless::format_headless_report(&report))
+            }
             HostTool::CaptureWorker {
                 output,
                 capture_mode,
@@ -720,7 +733,7 @@ pub fn run_host_tool(tool: &HostTool) -> Result<String> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = tool;
-        bail!("snapshot, input-test, and outputs are Linux only")
+        bail!("snapshot, input-test, outputs, and headless-check are Linux only")
     }
 }
 
@@ -1649,6 +1662,19 @@ mod tests {
                 HostOptions::default(),
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn test_parse_headless_check_tool() {
+        let s = |items: &[&str]| items.iter().map(|v| (*v).to_string()).collect::<Vec<_>>();
+
+        assert_eq!(
+            parse_host_args(&s(&["headless-check"]), HostOptions::default()).unwrap(),
+            HostCommand::Tool(HostTool::HeadlessCheck)
+        );
+        assert!(
+            parse_host_args(&s(&["headless-check", "--extra"]), HostOptions::default()).is_err()
         );
     }
 
