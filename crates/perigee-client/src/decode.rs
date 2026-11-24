@@ -563,4 +563,249 @@ mod tests {
         assert!(!should_fallback_to_software("vaav1dec", true, true, true));
         assert!(!should_fallback_to_software("av1dec", false, true, true));
     }
+
+    fn encode_synthetic_av1_keyframe(width: u32, height: u32) -> Vec<u8> {
+        ensure_gst_init().expect("GStreamer should initialize for test AV1 encode");
+
+        let pipeline = gst::Pipeline::new();
+        let src_caps = gst::Caps::builder("video/x-raw")
+            .field("format", "RGBA")
+            .field("width", width as i32)
+            .field("height", height as i32)
+            .field("framerate", gst::Fraction::new(30, 1))
+            .build();
+        let appsrc = gst_app::AppSrc::builder()
+            .name("test-av1-enc-src")
+            .is_live(true)
+            .format(gst::Format::Time)
+            .build();
+        appsrc.set_caps(Some(&src_caps));
+
+        let videoconvert = gst::ElementFactory::make("videoconvert")
+            .name("test-av1-enc-convert")
+            .build()
+            .expect("videoconvert should be available");
+        let capsfilter = gst::ElementFactory::make("capsfilter")
+            .name("test-av1-enc-caps")
+            .property(
+                "caps",
+                gst::Caps::builder("video/x-raw")
+                    .field("format", "I420")
+                    .build(),
+            )
+            .build()
+            .expect("capsfilter should be available");
+        let encoder = gst::ElementFactory::make("av1enc")
+            .name("test-av1-enc")
+            .build()
+            .expect("software av1enc should be available");
+        if encoder.find_property("usage-profile").is_some() {
+            encoder.set_property_from_str("usage-profile", "realtime");
+        }
+        if encoder.find_property("end-usage").is_some() {
+            encoder.set_property_from_str("end-usage", "cbr");
+        }
+        if encoder.find_property("cpu-used").is_some() {
+            encoder.set_property("cpu-used", 8i32);
+        }
+        if encoder.find_property("lag-in-frames").is_some() {
+            encoder.set_property("lag-in-frames", 0u32);
+        }
+
+        let sink_caps = gst::Caps::builder("video/x-av1")
+            .field("stream-format", "obu-stream")
+            .field("alignment", "tu")
+            .build();
+        let appsink = gst_app::AppSink::builder()
+            .name("test-av1-enc-sink")
+            .caps(&sink_caps)
+            .max_buffers(APPSINK_MAX_BUFFERS)
+            .sync(false)
+            .build();
+
+        if let Ok(av1parse) = gst::ElementFactory::make("av1parse")
+            .name("test-av1-enc-parse")
+            .build()
+        {
+            pipeline
+                .add_many([
+                    appsrc.upcast_ref(),
+                    &videoconvert,
+                    &capsfilter,
+                    &encoder,
+                    &av1parse,
+                    appsink.upcast_ref(),
+                ])
+                .expect("add elements to test AV1 encoder pipeline");
+            gst::Element::link_many([
+                appsrc.upcast_ref(),
+                &videoconvert,
+                &capsfilter,
+                &encoder,
+                &av1parse,
+                appsink.upcast_ref(),
+            ])
+            .expect("link test AV1 encoder pipeline");
+        } else {
+            pipeline
+                .add_many([
+                    appsrc.upcast_ref(),
+                    &videoconvert,
+                    &capsfilter,
+                    &encoder,
+                    appsink.upcast_ref(),
+                ])
+                .expect("add elements to test AV1 encoder pipeline");
+            gst::Element::link_many([
+                appsrc.upcast_ref(),
+                &videoconvert,
+                &capsfilter,
+                &encoder,
+                appsink.upcast_ref(),
+            ])
+            .expect("link test AV1 encoder pipeline");
+        }
+
+        pipeline
+            .set_state(gst::State::Playing)
+            .expect("test AV1 encoder pipeline should enter Playing");
+
+        let len = (width as usize) * (height as usize) * 4;
+        let mut buf = gst::Buffer::with_size(len).expect("allocate test RGBA buffer");
+        {
+            let buf_mut = buf.get_mut().expect("new buffer is writable");
+            buf_mut.set_pts(gst::ClockTime::from_nseconds(0));
+            buf_mut.set_duration(gst::ClockTime::from_nseconds(33_333_333));
+            let mut mapped = buf_mut.map_writable().expect("map test buffer writable");
+            let dst = mapped.as_mut_slice();
+            for y in 0..height as usize {
+                for x in 0..width as usize {
+                    let offset = (y * width as usize + x) * 4;
+                    dst[offset] = (x as u8).wrapping_mul(4);
+                    dst[offset + 1] = (y as u8).wrapping_mul(4);
+                    dst[offset + 2] = 0x80;
+                    dst[offset + 3] = 0xFF;
+                }
+            }
+        }
+
+        appsrc
+            .push_buffer(buf)
+            .expect("push synthetic RGBA frame to test AV1 encoder");
+        let sample = appsink
+            .try_pull_sample(PULL_SAMPLE_TIMEOUT)
+            .expect("pull encoded AV1 keyframe sample");
+        let out_buf = sample.buffer().expect("encoded AV1 sample has buffer");
+        let map = out_buf
+            .map_readable()
+            .expect("map encoded AV1 buffer readable");
+        let payload = map.as_slice().to_vec();
+        drop(map);
+
+        appsrc
+            .end_of_stream()
+            .expect("test AV1 encoder appsrc end_of_stream should succeed");
+        pipeline
+            .set_state(gst::State::Null)
+            .expect("test AV1 encoder pipeline should enter Null");
+
+        assert!(
+            !payload.is_empty(),
+            "encoded AV1 keyframe must be non-empty"
+        );
+        payload
+    }
+
+    #[test]
+    fn test_gstreamer_av1_decoder_decode_fallback_gating() {
+        let payload = encode_synthetic_av1_keyframe(64, 64);
+        let valid_keyframe = VideoFrameMessage {
+            frame_id: 1,
+            monitor_id: 1,
+            timestamp_us: 33_333,
+            codec: VideoCodec::AV1,
+            is_keyframe: true,
+            width: 64,
+            height: 64,
+            stride: 64,
+            format: PixelFormat::NV12,
+            payload: payload.clone(),
+        };
+        let non_keyframe = VideoFrameMessage {
+            frame_id: 2,
+            is_keyframe: false,
+            ..valid_keyframe.clone()
+        };
+
+        // 1. Valid AV1 keyframe decodes cleanly with software av1dec and marks has_decoded_frame.
+        let mut decoder =
+            GstreamerAv1Decoder::new(false).expect("software av1dec should initialize");
+        let surface = decoder
+            .decode(&valid_keyframe)
+            .expect("valid AV1 keyframe should decode");
+        assert_eq!(surface.width, 64);
+        assert_eq!(surface.height, 64);
+        assert!(decoder.has_decoded_frame);
+
+        // 2. Post-decode fault with vaav1dec preserves vaav1dec instead of falling back.
+        decoder.element_name = "vaav1dec";
+        decoder
+            .active
+            .as_ref()
+            .expect("active pipeline should exist")
+            .appsrc
+            .end_of_stream()
+            .expect("end_of_stream should succeed");
+        assert!(
+            decoder.decode(&valid_keyframe).is_err(),
+            "faulted post-decode pipeline should return Err"
+        );
+        assert_eq!(decoder.active_element_name(), "vaav1dec");
+
+        // 3. Fresh decoder (has_decoded_frame == false):
+        let mut fresh =
+            GstreamerAv1Decoder::new(false).expect("fresh software av1dec should initialize");
+        fresh
+            .ensure_pipeline()
+            .expect("fresh pipeline should be initialized");
+        assert!(!fresh.has_decoded_frame);
+
+        // 3a. Pre-decode non-keyframe fault preserves vaav1dec.
+        fresh.element_name = "vaav1dec";
+        fresh
+            .active
+            .as_ref()
+            .expect("active pipeline should exist")
+            .appsrc
+            .end_of_stream()
+            .expect("end_of_stream should succeed");
+        assert!(
+            fresh.decode(&non_keyframe).is_err(),
+            "faulted pre-decode non-keyframe should return Err"
+        );
+        assert_eq!(fresh.active_element_name(), "vaav1dec");
+        assert!(!fresh.has_decoded_frame);
+
+        // 3b. Pre-decode keyframe pipeline fault falls back to software av1dec and succeeds.
+        fresh.element_name = "av1dec";
+        fresh
+            .ensure_pipeline()
+            .expect("rebuild software pipeline before faulting");
+        fresh.element_name = "vaav1dec";
+        fresh
+            .active
+            .as_ref()
+            .expect("active pipeline should exist")
+            .appsrc
+            .end_of_stream()
+            .expect("end_of_stream should succeed");
+
+        let recovered = fresh
+            .decode(&valid_keyframe)
+            .expect("pre-decode keyframe pipeline fault should fall back to software av1dec");
+        assert_eq!(fresh.active_element_name(), "av1dec");
+        assert_eq!(recovered.width, 64);
+        assert_eq!(recovered.height, 64);
+        assert!(fresh.has_decoded_frame);
+    }
 }

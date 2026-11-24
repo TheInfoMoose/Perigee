@@ -739,19 +739,35 @@ mod tests {
         })
         .expect("GstreamerAv1Encoder::new should succeed");
 
-        encoder.use_vaapi = true;
-        encoder.fallback_to_software(&anyhow!("simulated vaav1enc failure"));
-        assert_eq!(encoder.active_element_name(), "av1enc");
-
         let frame = synthetic_bgra_frame(1, 128, 128, 128 * 4, 7);
-        let msg = encoder
+        let initial = encoder
             .encode(&frame, true)
-            .expect("software fallback encode should succeed");
-        assert_eq!(msg.codec, VideoCodec::AV1);
-        assert!(!msg.payload.is_empty());
-        assert!(msg.is_keyframe);
+            .expect("initial software encode should populate active pipeline");
+        assert_eq!(initial.codec, VideoCodec::AV1);
         assert!(encoder.active.is_some());
 
+        // Fault the active pipeline and flip use_vaapi so VideoEncoder::encode's runtime
+        // `Err(err) if self.use_vaapi` branch performs the fallback to software av1enc.
+        encoder
+            .active
+            .as_ref()
+            .expect("active pipeline should exist")
+            .appsrc
+            .end_of_stream()
+            .expect("end_of_stream should succeed");
+        encoder.use_vaapi = true;
+
+        let msg = encoder
+            .encode(&frame, true)
+            .expect("runtime encode fallback from vaav1enc to av1enc should succeed");
+        assert_eq!(msg.codec, VideoCodec::AV1);
+        assert!(msg.is_keyframe);
+        assert!(!msg.payload.is_empty());
+        assert_eq!(encoder.active_element_name(), "av1enc");
+        assert!(encoder.active.is_some());
+
+        // Now fault the software pipeline with use_vaapi == false: encode should fail and
+        // tear down encoder.active, then rebuild and succeed on the subsequent encode.
         encoder
             .active
             .as_ref()
