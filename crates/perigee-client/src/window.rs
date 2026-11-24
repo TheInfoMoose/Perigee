@@ -143,6 +143,31 @@ pub fn format_window_title(base: &str, frame_size: Option<(u32, u32)>) -> String
     }
 }
 
+/// Recovery policy for non-presentable `wgpu` surface acquisition outcomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SurfaceRecoveryAction {
+    /// Reconfigure the surface and immediately request another redraw so static streams stay fresh.
+    ReconfigureAndRedraw,
+    /// Skip this frame without requesting an extra redraw.
+    Skip,
+    /// Propagate a fatal surface validation error.
+    Error,
+}
+
+/// Classifies a `wgpu` surface acquisition outcome into its recovery action.
+fn classify_surface_recovery(outcome: &wgpu::CurrentSurfaceTexture) -> SurfaceRecoveryAction {
+    match outcome {
+        wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+            SurfaceRecoveryAction::ReconfigureAndRedraw
+        }
+        wgpu::CurrentSurfaceTexture::Timeout
+        | wgpu::CurrentSurfaceTexture::Occluded
+        | wgpu::CurrentSurfaceTexture::Success(_)
+        | wgpu::CurrentSurfaceTexture::Suboptimal(_) => SurfaceRecoveryAction::Skip,
+        wgpu::CurrentSurfaceTexture::Validation => SurfaceRecoveryAction::Error,
+    }
+}
+
 /// Minimal thread-parking waker used to drive `wgpu` adapter/device futures synchronously
 /// without requiring or conflicting with a Tokio runtime on the UI thread.
 struct ThreadWaker(Thread);
@@ -432,18 +457,21 @@ impl GpuState {
         let output = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(tex)
             | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => tex,
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                self.surface.configure(&self.device, &self.surface_config);
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Validation => {
-                return Err(anyhow!(
-                    "wgpu surface validation error while acquiring frame"
-                ));
-            }
+            other => match classify_surface_recovery(&other) {
+                SurfaceRecoveryAction::ReconfigureAndRedraw => {
+                    self.surface.configure(&self.device, &self.surface_config);
+                    self.window.request_redraw();
+                    return Ok(());
+                }
+                SurfaceRecoveryAction::Skip => {
+                    return Ok(());
+                }
+                SurfaceRecoveryAction::Error => {
+                    return Err(anyhow!(
+                        "wgpu surface validation error while acquiring frame"
+                    ));
+                }
+            },
         };
 
         let view = output
@@ -794,6 +822,30 @@ mod tests {
         assert_eq!(
             format_window_title(&default_cfg.title, None),
             "Perigee Viewer"
+        );
+    }
+
+    #[test]
+    fn test_surface_recovery_requests_redraw_only_on_lost_or_outdated() {
+        assert_eq!(
+            classify_surface_recovery(&wgpu::CurrentSurfaceTexture::Lost),
+            SurfaceRecoveryAction::ReconfigureAndRedraw
+        );
+        assert_eq!(
+            classify_surface_recovery(&wgpu::CurrentSurfaceTexture::Outdated),
+            SurfaceRecoveryAction::ReconfigureAndRedraw
+        );
+        assert_eq!(
+            classify_surface_recovery(&wgpu::CurrentSurfaceTexture::Timeout),
+            SurfaceRecoveryAction::Skip
+        );
+        assert_eq!(
+            classify_surface_recovery(&wgpu::CurrentSurfaceTexture::Occluded),
+            SurfaceRecoveryAction::Skip
+        );
+        assert_eq!(
+            classify_surface_recovery(&wgpu::CurrentSurfaceTexture::Validation),
+            SurfaceRecoveryAction::Error
         );
     }
 }
