@@ -91,8 +91,11 @@ objc2-io-surface = { version = "0.3.2", default-features = false, features = ["s
 objc2-metal = { version = "0.3.2", default-features = false, features = ["std"] }
 objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std"] }
 
-# Video Encoding Engine
+# Video Encoding & Decoding Engine
 rav1e = { version = "0.8.1", default-features = false, features = ["threading"] }
+gstreamer = "0.25.4"
+gstreamer-app = "0.25.2"
+gstreamer-video = "0.25.4"
 
 # Network, Transport & NIST Cryptographic Security
 quinn = { version = "0.11.12", default-features = false, features = ["rustls-aws-lc-rs", "runtime-tokio"] }

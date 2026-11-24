@@ -10,9 +10,13 @@ description = "Remote viewer session pipeline engine, wgpu presenter, and latenc
 
 [dependencies]
 anyhow = { workspace = true }
+gstreamer = { workspace = true }
+gstreamer-app = { workspace = true }
+gstreamer-video = { workspace = true }
 perigee-channels = { workspace = true }
 perigee-net = { workspace = true }
 perigee-protocol = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 wgpu = { workspace = true }
+winit = { workspace = true }
