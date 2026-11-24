@@ -200,7 +200,7 @@ created_at = "2026-11-23T03:47:49Z"
 [[items.tasks]]
 id = "TASK-0124"
 title = "Re-arm force_keyframe on dropped keyframes/inter-frame video, decouple outgoing_rx from video pump, add tests (BUG-0026, BUG-0027, TASK-0122)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-23T03:47:49Z"
 
