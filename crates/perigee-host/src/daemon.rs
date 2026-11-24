@@ -325,8 +325,15 @@ impl HostSessionEngine {
                                     "Frame timing"
                                 );
                             }
-                            Err(mpsc::error::TrySendError::Full(_)) => {
-                                if need_keyframe {
+                            Err(mpsc::error::TrySendError::Full(dropped)) => {
+                                let rearm_keyframe = need_keyframe
+                                    || matches!(
+                                        dropped,
+                                        WireMessage::Video(ref frame)
+                                            if frame.is_keyframe
+                                                || frame.codec != VideoCodec::RawBgra
+                                    );
+                                if rearm_keyframe {
                                     force_keyframe.store(true, Ordering::SeqCst);
                                 }
                                 debug!(
@@ -436,6 +443,50 @@ impl HostSessionEngine {
 
 fn bitrate_kbps_from_bytes_per_sec(bytes_per_sec: u64) -> u32 {
     u32::try_from(bytes_per_sec.saturating_mul(8) / 1000).unwrap_or(u32::MAX)
+}
+
+/// Pumps outbound control/audio (`outgoing_rx`) and video (`video_rx`) messages through `send`
+/// until both channels close, `stop_rx` signals shutdown, `is_running` becomes false, or `send`
+/// returns an error. Closing one channel does not stop delivery from the other.
+pub(crate) async fn pump_outbound_channels<F, Fut>(
+    mut outgoing_rx: mpsc::Receiver<WireMessage>,
+    mut video_rx: mpsc::Receiver<WireMessage>,
+    mut stop_rx: watch::Receiver<bool>,
+    is_running: impl Fn() -> bool,
+    mut send: F,
+) -> Result<()>
+where
+    F: FnMut(WireMessage) -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    let mut outgoing_open = true;
+    let mut video_open = true;
+
+    while is_running() && !*stop_rx.borrow() && (outgoing_open || video_open) {
+        let msg = tokio::select! {
+            msg = outgoing_rx.recv(), if outgoing_open => match msg {
+                Some(msg) => msg,
+                None => {
+                    outgoing_open = false;
+                    continue;
+                }
+            },
+            msg = video_rx.recv(), if video_open => match msg {
+                Some(msg) => msg,
+                None => {
+                    video_open = false;
+                    continue;
+                }
+            },
+            _ = stop_rx.changed() => break,
+        };
+        if !is_running() {
+            break;
+        }
+        send(msg).await?;
+    }
+
+    Ok(())
 }
 
 /// How long a newly connected client has to send its `ClientHello` before the host closes the
@@ -674,8 +725,8 @@ impl PerigeeHostDaemon {
             return Err(e.context("Failed to send HandshakeMessage::AuthResponse over QUIC stream"));
         }
 
-        let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<WireMessage>(256);
-        let (video_tx, mut video_rx) = mpsc::channel::<WireMessage>(MAX_OUTBOUND_VIDEO_BACKLOG);
+        let (outgoing_tx, outgoing_rx) = mpsc::channel::<WireMessage>(256);
+        let (video_tx, video_rx) = mpsc::channel::<WireMessage>(MAX_OUTBOUND_VIDEO_BACKLOG);
         if let Err(e) = session
             .run_capture_loop_with_video(outgoing_tx, video_tx)
             .await
@@ -687,50 +738,51 @@ impl PerigeeHostDaemon {
         // Task 1: Pump outbound video/audio/channel frames over QUIC streams
         let conn_outbound = conn.clone();
         let session_outbound = session.clone();
-        let mut stop_outbound = session.subscribe_stop();
+        let stop_outbound = session.subscribe_stop();
         tokio::spawn(async move {
-            while session_outbound.is_running() && !*stop_outbound.borrow() {
-                let maybe_msg = tokio::select! {
-                    msg = outgoing_rx.recv() => msg,
-                    msg = video_rx.recv() => msg,
-                    _ = stop_outbound.changed() => None,
-                };
-                let Some(msg) = maybe_msg else {
-                    break;
-                };
-                if !session_outbound.is_running() {
-                    break;
-                }
-                let res = match &msg {
-                    WireMessage::Input(_)
-                    | WireMessage::Control(ControlMessage::FrameAck { .. }) => {
-                        conn_outbound.send_datagram(&msg)
-                    }
-                    WireMessage::Video(video) => {
-                        let send_started = Instant::now();
-                        let res = conn_outbound.send_uni_message(&msg).await;
-                        if res.is_ok() {
-                            debug!(
-                                session_id = %session_outbound.session_id,
-                                frame_id = video.frame_id,
-                                payload_bytes = video.payload.len(),
-                                net_send_ms = send_started.elapsed().as_millis() as u64,
-                                "Video frame sent"
-                            );
+            let session_running = session_outbound.clone();
+            let session_send = session_outbound.clone();
+            if let Err(e) = pump_outbound_channels(
+                outgoing_rx,
+                video_rx,
+                stop_outbound,
+                move || session_running.is_running(),
+                move |msg| {
+                    let conn_outbound = conn_outbound.clone();
+                    let session_id = session_send.session_id.clone();
+                    async move {
+                        match &msg {
+                            WireMessage::Input(_)
+                            | WireMessage::Control(ControlMessage::FrameAck { .. }) => {
+                                conn_outbound.send_datagram(&msg)
+                            }
+                            WireMessage::Video(video) => {
+                                let send_started = Instant::now();
+                                let res = conn_outbound.send_uni_message(&msg).await;
+                                if res.is_ok() {
+                                    debug!(
+                                        session_id = %session_id,
+                                        frame_id = video.frame_id,
+                                        payload_bytes = video.payload.len(),
+                                        net_send_ms = send_started.elapsed().as_millis() as u64,
+                                        "Video frame sent"
+                                    );
+                                }
+                                res
+                            }
+                            _ => conn_outbound.send_uni_message(&msg).await,
                         }
-                        res
                     }
-                    _ => conn_outbound.send_uni_message(&msg).await,
-                };
-                if let Err(e) = res {
-                    debug!(
-                        session_id = %session_outbound.session_id,
-                        error = %e,
-                        "Outbound QUIC stream pump terminated"
-                    );
-                    session_outbound.stop();
-                    break;
-                }
+                },
+            )
+            .await
+            {
+                debug!(
+                    session_id = %session_outbound.session_id,
+                    error = %e,
+                    "Outbound QUIC stream pump terminated"
+                );
+                session_outbound.stop();
             }
         });
 
@@ -1658,5 +1710,207 @@ mod tests {
         .await
         .expect("Timed out waiting for capture loop to close video channel after stop");
         assert!(!session.is_running());
+    }
+
+    struct RecordingEncoder {
+        codec: VideoCodec,
+        is_keyframe: bool,
+        next_frame_id: u64,
+        recorded_force_keyframe: Arc<std::sync::Mutex<Vec<bool>>>,
+        notify: Arc<tokio::sync::Notify>,
+    }
+
+    impl VideoEncoder for RecordingEncoder {
+        fn encode(
+            &mut self,
+            frame: &CapturedFrame,
+            force_keyframe: bool,
+        ) -> Result<perigee_protocol::VideoFrameMessage> {
+            self.next_frame_id += 1;
+            {
+                let mut recorded = self.recorded_force_keyframe.lock().unwrap();
+                recorded.push(force_keyframe);
+                if recorded.len() >= 2 {
+                    self.notify.notify_waiters();
+                }
+            }
+            Ok(perigee_protocol::VideoFrameMessage {
+                frame_id: self.next_frame_id,
+                monitor_id: frame.display_id,
+                timestamp_us: frame.timestamp_us,
+                codec: self.codec,
+                is_keyframe: self.is_keyframe,
+                width: frame.width,
+                height: frame.height,
+                stride: frame.stride,
+                format: frame.pixel_format,
+                payload: vec![0u8; 16],
+            })
+        }
+
+        fn update_bitrate(&mut self, _target_bitrate_kbps: u32) -> Result<()> {
+            Ok(())
+        }
+
+        fn update_framerate(&mut self, _target_fps: u32) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn dummy_video_message(frame_id: u64) -> WireMessage {
+        WireMessage::Video(perigee_protocol::VideoFrameMessage {
+            frame_id,
+            monitor_id: 1,
+            timestamp_us: 0,
+            codec: VideoCodec::RawBgra,
+            is_keyframe: true,
+            width: 4,
+            height: 4,
+            stride: 16,
+            format: perigee_protocol::PixelFormat::Bgra8,
+            payload: vec![0u8; 16],
+        })
+    }
+
+    #[tokio::test]
+    async fn test_dropped_keyframe_and_interframe_rearm_force_keyframe() {
+        async fn assert_drop_rearms(codec: VideoCodec, is_keyframe: bool) {
+            let session = HostSessionEngine::new(
+                format!("drop-rearm-{codec:?}-{is_keyframe}"),
+                CaptureBackendType::WaylandPipeWire,
+                EncoderConfig {
+                    width: 64,
+                    height: 64,
+                    target_fps: 200,
+                    ..EncoderConfig::default()
+                },
+            )
+            .expect("HostSessionEngine::new should succeed");
+            session.force_keyframe_flag.store(false, Ordering::SeqCst);
+
+            let recorded = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let notify = Arc::new(tokio::sync::Notify::new());
+            *session.encoder.lock().await = Box::new(RecordingEncoder {
+                codec,
+                is_keyframe,
+                next_frame_id: 0,
+                recorded_force_keyframe: recorded.clone(),
+                notify: notify.clone(),
+            });
+
+            let (outgoing_tx, _outgoing_rx) = mpsc::channel::<WireMessage>(256);
+            let (video_tx, _video_rx) = mpsc::channel::<WireMessage>(MAX_OUTBOUND_VIDEO_BACKLOG);
+            for i in 0..MAX_OUTBOUND_VIDEO_BACKLOG {
+                video_tx
+                    .try_send(dummy_video_message(i as u64))
+                    .expect("pre-filling bounded video channel should succeed");
+            }
+
+            session
+                .run_capture_loop_with_video(outgoing_tx, video_tx)
+                .await
+                .expect("run_capture_loop_with_video should succeed");
+
+            tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    let notified = notify.notified();
+                    if recorded.lock().unwrap().len() >= 2 {
+                        break;
+                    }
+                    notified.await;
+                }
+            })
+            .await
+            .expect("Timed out waiting for two encode calls under full video queue");
+
+            session.stop();
+
+            let flags = recorded.lock().unwrap().clone();
+            assert!(
+                !flags[0],
+                "first encode call should observe need_keyframe == false"
+            );
+            assert!(
+                flags[1],
+                "subsequent encode call after dropping ({codec:?}, is_keyframe={is_keyframe}) must receive force_keyframe == true"
+            );
+        }
+
+        // Case 1: encoder-initiated keyframe dropped while need_keyframe is false.
+        assert_drop_rearms(VideoCodec::RawBgra, true).await;
+        // Case 2: non-raw inter-frame delta dropped while need_keyframe is false.
+        assert_drop_rearms(VideoCodec::AV1, false).await;
+    }
+
+    #[tokio::test]
+    async fn test_outbound_pump_continues_video_after_outgoing_rx_closes() {
+        let (outgoing_tx, outgoing_rx) = mpsc::channel::<WireMessage>(8);
+        let (video_tx, video_rx) = mpsc::channel::<WireMessage>(MAX_OUTBOUND_VIDEO_BACKLOG);
+        let (_stop_tx, stop_rx) = watch::channel(false);
+        let (sent_tx, mut sent_rx) = mpsc::channel::<WireMessage>(8);
+
+        let pump = tokio::spawn(async move {
+            pump_outbound_channels(
+                outgoing_rx,
+                video_rx,
+                stop_rx,
+                || true,
+                move |msg| {
+                    let sent_tx = sent_tx.clone();
+                    async move {
+                        sent_tx.send(msg).await?;
+                        Ok(())
+                    }
+                },
+            )
+            .await
+        });
+
+        // Close outgoing_tx while video_tx remains open.
+        drop(outgoing_tx);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Video messages must still be pumped after outgoing_rx closes.
+        video_tx
+            .send(dummy_video_message(42))
+            .await
+            .expect("video_tx should remain open");
+        let received = tokio::time::timeout(Duration::from_secs(2), sent_rx.recv())
+            .await
+            .expect("Timed out waiting for video frame after outgoing_rx closed")
+            .expect("sent_rx closed unexpectedly");
+        match received {
+            WireMessage::Video(frame) => assert_eq!(frame.frame_id, 42),
+            other => panic!("Expected WireMessage::Video, got {other:?}"),
+        }
+
+        // Closing video_tx ends the pump cleanly once both channels are closed.
+        drop(video_tx);
+        tokio::time::timeout(Duration::from_secs(2), pump)
+            .await
+            .expect("Timed out waiting for outbound pump to exit after both channels closed")
+            .expect("pump task panicked")
+            .expect("pump should return Ok(())");
+
+        // Stopping while channels are open and idle must also terminate the pump promptly.
+        let (_outgoing_tx2, outgoing_rx2) = mpsc::channel::<WireMessage>(8);
+        let (_video_tx2, video_rx2) = mpsc::channel::<WireMessage>(MAX_OUTBOUND_VIDEO_BACKLOG);
+        let (stop_tx2, stop_rx2) = watch::channel(false);
+        let idle_pump = tokio::spawn(async move {
+            pump_outbound_channels(
+                outgoing_rx2,
+                video_rx2,
+                stop_rx2,
+                || true,
+                |_msg| async { Ok(()) },
+            )
+            .await
+        });
+        stop_tx2.send(true).expect("stop_tx2 send should succeed");
+        tokio::time::timeout(Duration::from_secs(2), idle_pump)
+            .await
+            .expect("Timed out waiting for idle outbound pump to exit on stop")
+            .expect("idle pump task panicked")
+            .expect("idle pump should return Ok(())");
     }
 }
