@@ -1,0 +1,17 @@
+[item]
+id = "BUG-0036"
+type = "bug"
+title = "Test GstreamerAv1Decoder::decode has_decoded_frame and DecodeError fallback gating"
+status = "pending"
+severity = "low"
+scope_ref = "perigee_client"
+created_at = "2026-11-24T19:13:08Z"
+updated_at = "2026-11-24T19:13:35Z"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+previous_fixes = []

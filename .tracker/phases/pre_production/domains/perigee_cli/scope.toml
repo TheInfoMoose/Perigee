@@ -17,7 +17,7 @@ features = []
 [[items.bugs]]
 id = "BUG-0033"
 title = "perigee connect --window silently ignores --dump-frame and blocks Tokio worker without block_in_place"
-status = "pending"
+status = "closed"
 severity = "low"
 created_at = "2026-11-24T12:12:58Z"
 
