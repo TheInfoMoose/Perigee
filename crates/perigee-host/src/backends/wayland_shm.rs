@@ -29,6 +29,10 @@ use wayland_protocols::ext::image_copy_capture::v1::client::{
     ext_image_copy_capture_manager_v1::{self, ExtImageCopyCaptureManagerV1},
     ext_image_copy_capture_session_v1::{self, ExtImageCopyCaptureSessionV1},
 };
+use wayland_protocols::xdg::xdg_output::zv1::client::{
+    zxdg_output_manager_v1::ZxdgOutputManagerV1,
+    zxdg_output_v1::{self, ZxdgOutputV1},
+};
 
 use perigee_protocol::{MonitorInfo, PixelFormat};
 
@@ -178,12 +182,173 @@ pub fn shm_format_to_pixel_format(format: wl_shm::Format) -> Option<PixelFormat>
     }
 }
 
-#[derive(Debug, Clone, Default)]
-struct OutputInfo {
-    name: String,
-    width: i32,
-    height: i32,
-    refresh_mhz: i32,
+#[derive(Debug, Clone)]
+pub(crate) struct OutputInfo {
+    pub(crate) name: String,
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) width: i32,
+    pub(crate) height: i32,
+    pub(crate) refresh_mhz: i32,
+    pub(crate) scale: i32,
+    pub(crate) logical_x: Option<i32>,
+    pub(crate) logical_y: Option<i32>,
+    pub(crate) logical_width: Option<i32>,
+    pub(crate) logical_height: Option<i32>,
+    pub(crate) xdg_name: Option<String>,
+}
+
+impl Default for OutputInfo {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+            refresh_mhz: 0,
+            scale: 1,
+            logical_x: None,
+            logical_y: None,
+            logical_width: None,
+            logical_height: None,
+            xdg_name: None,
+        }
+    }
+}
+
+/// Converts collected `wl_output` and optional `zxdg_output_v1` metadata into a [`MonitorInfo`].
+pub(crate) fn output_info_to_monitor_info(
+    index: usize,
+    active_output: usize,
+    info: &OutputInfo,
+) -> MonitorInfo {
+    let name = info
+        .xdg_name
+        .as_deref()
+        .filter(|name| !name.is_empty())
+        .or_else(|| (!info.name.is_empty()).then_some(info.name.as_str()))
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("output-{index}"));
+    let x = info.logical_x.unwrap_or(info.x);
+    let y = info.logical_y.unwrap_or(info.y);
+    let width = if info.width > 0 {
+        info.width as u32
+    } else {
+        info.logical_width.unwrap_or(0).max(0) as u32
+    };
+    let height = if info.height > 0 {
+        info.height as u32
+    } else {
+        info.logical_height.unwrap_or(0).max(0) as u32
+    };
+    let scale_factor = match info.logical_width {
+        Some(logical_w) if logical_w > 0 && info.width > 0 => {
+            (info.width as f32 / logical_w as f32).max(1.0)
+        }
+        _ => info.scale.max(1) as f32,
+    };
+    MonitorInfo {
+        monitor_id: index as u32 + 1,
+        name,
+        x,
+        y,
+        width,
+        height,
+        scale_factor,
+        refresh_rate_hz: (info.refresh_mhz.max(0) / 1000) as u32,
+        is_primary: index == active_output,
+    }
+}
+
+/// Formats a list of [`MonitorInfo`] entries as one human-readable line per output.
+pub fn format_monitor_list(monitors: &[MonitorInfo]) -> String {
+    if monitors.is_empty() {
+        return "no Wayland outputs found".to_string();
+    }
+    monitors
+        .iter()
+        .enumerate()
+        .map(|(idx, monitor)| {
+            format!(
+                "index {idx}: {} {}x{}{:+}{:+} @ {}Hz scale={:.2}",
+                monitor.name,
+                monitor.width,
+                monitor.height,
+                monitor.x,
+                monitor.y,
+                monitor.refresh_rate_hz,
+                monitor.scale_factor
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Connects to Wayland (`socket` or `WAYLAND_DISPLAY`), enumerates all `wl_output` and optional
+/// `zxdg_output_v1` metadata, and returns the resulting [`MonitorInfo`] list without creating a
+/// capture session or allocating shared-memory buffers.
+pub fn list_wayland_outputs(socket: Option<&Path>) -> Result<Vec<MonitorInfo>> {
+    let connection = connect_wayland(socket)?;
+    let (globals, mut queue) = registry_queue_init::<CaptureState>(&connection)
+        .context("failed to read the Wayland registry")?;
+    let mut state = CaptureState::default();
+    enumerate_wayland_outputs(&globals, &mut queue, &mut state)?;
+    Ok(state
+        .outputs
+        .iter()
+        .enumerate()
+        .map(|(index, (_, info))| output_info_to_monitor_info(index, 0, info))
+        .collect())
+}
+
+fn connect_wayland(socket: Option<&Path>) -> Result<Connection> {
+    match socket {
+        Some(path) => {
+            let stream = UnixStream::connect(path)
+                .with_context(|| format!("failed to connect to {}", path.display()))?;
+            Connection::from_socket(stream).context("failed to open the Wayland connection")
+        }
+        None => Connection::connect_to_env().context("failed to connect to WAYLAND_DISPLAY"),
+    }
+}
+
+fn enumerate_wayland_outputs(
+    globals: &wayland_client::globals::GlobalList,
+    queue: &mut EventQueue<CaptureState>,
+    state: &mut CaptureState,
+) -> Result<()> {
+    let qh = queue.handle();
+    let output_globals: Vec<(u32, u32)> = globals
+        .contents()
+        .clone_list()
+        .into_iter()
+        .filter(|global| global.interface == "wl_output")
+        .map(|global| (global.name, global.version))
+        .collect();
+    for (index, (name, version)) in output_globals.into_iter().enumerate() {
+        let output: wl_output::WlOutput = globals.registry().bind(name, version.min(4), &qh, index);
+        state.outputs.push((output, OutputInfo::default()));
+    }
+    queue.roundtrip(state).context("Wayland roundtrip failed")?;
+
+    if let Ok(xdg_output_manager) = globals.bind::<ZxdgOutputManagerV1, _, _>(&qh, 1..=3, ()) {
+        let xdg_outputs: Vec<ZxdgOutputV1> = state
+            .outputs
+            .iter()
+            .enumerate()
+            .map(|(index, (output, _))| xdg_output_manager.get_xdg_output(output, &qh, index))
+            .collect();
+        queue
+            .roundtrip(state)
+            .context("Wayland xdg-output roundtrip failed")?;
+        for xdg_output in xdg_outputs {
+            xdg_output.destroy();
+        }
+        xdg_output_manager.destroy();
+    }
+
+    Ok(())
 }
 
 enum FrameResult {
@@ -227,17 +392,57 @@ impl Dispatch<wl_output::WlOutput, usize> for CaptureState {
             return;
         };
         match event {
+            wl_output::Event::Geometry { x, y, .. } => {
+                info.x = x;
+                info.y = y;
+            }
             wl_output::Event::Mode {
+                flags,
                 width,
                 height,
                 refresh,
-                ..
             } => {
-                info.width = width;
-                info.height = height;
-                info.refresh_mhz = refresh;
+                let is_current =
+                    matches!(flags, WEnum::Value(mode) if mode.contains(wl_output::Mode::Current));
+                if is_current || (info.width == 0 && info.height == 0) {
+                    info.width = width;
+                    info.height = height;
+                    info.refresh_mhz = refresh;
+                }
+            }
+            wl_output::Event::Scale { factor } => {
+                info.scale = factor;
             }
             wl_output::Event::Name { name } => info.name = name,
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<ZxdgOutputV1, usize> for CaptureState {
+    fn event(
+        state: &mut Self,
+        _: &ZxdgOutputV1,
+        event: zxdg_output_v1::Event,
+        index: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some((_, info)) = state.outputs.get_mut(*index) else {
+            return;
+        };
+        match event {
+            zxdg_output_v1::Event::LogicalPosition { x, y } => {
+                info.logical_x = Some(x);
+                info.logical_y = Some(y);
+            }
+            zxdg_output_v1::Event::LogicalSize { width, height } => {
+                info.logical_width = Some(width);
+                info.logical_height = Some(height);
+            }
+            zxdg_output_v1::Event::Name { name } => {
+                info.xdg_name = Some(name);
+            }
             _ => {}
         }
     }
@@ -296,6 +501,7 @@ delegate_noop!(CaptureState: wl_shm_pool::WlShmPool);
 delegate_noop!(CaptureState: ExtOutputImageCaptureSourceManagerV1);
 delegate_noop!(CaptureState: ExtImageCaptureSourceV1);
 delegate_noop!(CaptureState: ExtImageCopyCaptureManagerV1);
+delegate_noop!(CaptureState: ZxdgOutputManagerV1);
 
 /// One allocated `wl_shm` buffer matching the session's current constraints.
 struct ShmBuffer {
@@ -337,14 +543,7 @@ impl WaylandShmCapturer {
     /// output `output_index` (0 = the first `wl_output` the compositor lists), and allocates its
     /// shared-memory buffer in `shm_dir` (the session's `XDG_RUNTIME_DIR`).
     pub fn connect(socket: Option<&Path>, shm_dir: &Path, output_index: usize) -> Result<Self> {
-        let connection = match socket {
-            Some(path) => {
-                let stream = UnixStream::connect(path)
-                    .with_context(|| format!("failed to connect to {}", path.display()))?;
-                Connection::from_socket(stream).context("failed to open the Wayland connection")?
-            }
-            None => Connection::connect_to_env().context("failed to connect to WAYLAND_DISPLAY")?,
-        };
+        let connection = connect_wayland(socket)?;
         let (globals, mut queue) = registry_queue_init::<CaptureState>(&connection)
             .context("failed to read the Wayland registry")?;
         let qh = queue.handle();
@@ -359,21 +558,7 @@ impl WaylandShmCapturer {
             .context("compositor has no ext_image_copy_capture_manager_v1")?;
 
         let mut state = CaptureState::default();
-        let output_globals: Vec<(u32, u32)> = globals
-            .contents()
-            .clone_list()
-            .into_iter()
-            .filter(|global| global.interface == "wl_output")
-            .map(|global| (global.name, global.version))
-            .collect();
-        for (index, (name, version)) in output_globals.into_iter().enumerate() {
-            let output: wl_output::WlOutput =
-                globals.registry().bind(name, version.min(4), &qh, index);
-            state.outputs.push((output, OutputInfo::default()));
-        }
-        queue
-            .roundtrip(&mut state)
-            .context("Wayland roundtrip failed")?;
+        enumerate_wayland_outputs(&globals, &mut queue, &mut state)?;
         let output = state
             .outputs
             .get(output_index)
@@ -631,17 +816,7 @@ impl FrameCapturer for WaylandShmCapturer {
             .outputs
             .iter()
             .enumerate()
-            .map(|(index, (_, info))| MonitorInfo {
-                monitor_id: index as u32 + 1,
-                name: info.name.clone(),
-                x: 0,
-                y: 0,
-                width: info.width.max(0) as u32,
-                height: info.height.max(0) as u32,
-                scale_factor: 1.0,
-                refresh_rate_hz: (info.refresh_mhz.max(0) / 1000) as u32,
-                is_primary: index == self.output_index,
-            })
+            .map(|(index, (_, info))| output_info_to_monitor_info(index, self.output_index, info))
             .collect())
     }
 
@@ -854,6 +1029,112 @@ mod tests {
         assert!(
             elapsed < std::time::Duration::from_secs(1),
             "POLLOUT wait took too long after peer read: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn test_output_info_prefers_xdg_logical_geometry_and_computes_fractional_scale() {
+        let xdg_info = OutputInfo {
+            name: "wl-DP-1".to_string(),
+            x: 100,
+            y: 200,
+            width: 3840,
+            height: 2160,
+            refresh_mhz: 60_000,
+            scale: 2,
+            logical_x: Some(1920),
+            logical_y: Some(0),
+            logical_width: Some(2560),
+            logical_height: Some(1440),
+            xdg_name: Some("DP-1".to_string()),
+        };
+        let mon = output_info_to_monitor_info(1, 0, &xdg_info);
+        assert_eq!(mon.monitor_id, 2);
+        assert_eq!(mon.name, "DP-1");
+        assert_eq!(mon.x, 1920);
+        assert_eq!(mon.y, 0);
+        assert_eq!(mon.width, 3840);
+        assert_eq!(mon.height, 2160);
+        assert_eq!(mon.refresh_rate_hz, 60);
+        assert!(!mon.is_primary);
+        assert!(
+            (mon.scale_factor - 1.5).abs() < 0.01,
+            "expected scale_factor ~1.5, got {}",
+            mon.scale_factor
+        );
+
+        // Fallback when xdg_output fields are None uses wl_output x/y/scale and name.
+        let wl_only = OutputInfo {
+            name: "HDMI-A-1".to_string(),
+            x: 0,
+            y: 1080,
+            width: 1920,
+            height: 1080,
+            refresh_mhz: 144_000,
+            scale: 2,
+            logical_x: None,
+            logical_y: None,
+            logical_width: None,
+            logical_height: None,
+            xdg_name: None,
+        };
+        let fallback = output_info_to_monitor_info(0, 0, &wl_only);
+        assert_eq!(fallback.monitor_id, 1);
+        assert_eq!(fallback.name, "HDMI-A-1");
+        assert_eq!(fallback.x, 0);
+        assert_eq!(fallback.y, 1080);
+        assert_eq!(fallback.width, 1920);
+        assert_eq!(fallback.height, 1080);
+        assert_eq!(fallback.refresh_rate_hz, 144);
+        assert!(fallback.is_primary);
+        assert!(
+            (fallback.scale_factor - 2.0).abs() < 0.01,
+            "expected scale_factor 2.0, got {}",
+            fallback.scale_factor
+        );
+
+        // Empty name falls back to output-<index>.
+        let unnamed = OutputInfo::default();
+        let default_mon = output_info_to_monitor_info(2, 0, &unnamed);
+        assert_eq!(default_mon.name, "output-2");
+        assert!((default_mon.scale_factor - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_format_monitor_list_formats_multiple_outputs_and_empty() {
+        assert_eq!(format_monitor_list(&[]), "no Wayland outputs found");
+
+        let monitors = vec![
+            MonitorInfo {
+                monitor_id: 1,
+                name: "eDP-1".to_string(),
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+                scale_factor: 1.0,
+                refresh_rate_hz: 60,
+                is_primary: true,
+            },
+            MonitorInfo {
+                monitor_id: 2,
+                name: "DP-1".to_string(),
+                x: 1920,
+                y: 0,
+                width: 3840,
+                height: 2160,
+                scale_factor: 1.5,
+                refresh_rate_hz: 120,
+                is_primary: false,
+            },
+        ];
+        let formatted = format_monitor_list(&monitors);
+        let lines: Vec<&str> = formatted.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "index 0: eDP-1 1920x1080+0+0 @ 60Hz scale=1.00");
+        assert_eq!(
+            lines[1],
+            "index 1: DP-1 3840x2160+1920+0 @ 120Hz scale=1.50"
         );
     }
 }

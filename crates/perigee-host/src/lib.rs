@@ -18,6 +18,8 @@ pub use audio::{
 pub mod backends;
 #[cfg(target_os = "linux")]
 pub use backends::WaylandShmCapturer;
+#[cfg(target_os = "linux")]
+pub use backends::wayland_shm::{format_monitor_list, list_wayland_outputs};
 pub use backends::{
     CG_EVENT_FLAG_MASK_ALTERNATE, CG_EVENT_FLAG_MASK_COMMAND, CG_EVENT_FLAG_MASK_CONTROL,
     CG_EVENT_FLAG_MASK_SHIFT, CV_PIXEL_FORMAT_32BGRA, CV_PIXEL_FORMAT_32RGBA, CV_PIXEL_FORMAT_420F,

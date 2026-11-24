@@ -35,6 +35,7 @@ Usage: perigee-host [run] [OPTIONS]
        perigee-host pair [--bind <ADDR>] [--ttl <SECONDS>] [--config-dir <DIR>]
        perigee-host snapshot --out <FILE.ppm> [--output <INDEX>]
        perigee-host input-test
+       perigee-host outputs
 
 Key management:
   identity              Print this host's node key (created on first use)
@@ -47,6 +48,7 @@ Key management:
 Live checks (Linux, run inside the Wayland session):
   snapshot              Capture one frame of output INDEX (default 0) to a PPM file
   input-test            Move the pointer to the centre, click, and type \"perigee\" via /dev/uinput
+  outputs               List Wayland compositor outputs with geometry, refresh rate, and scale
 
 Options:
   --bind <ADDR>         UDP socket bind address (default: 127.0.0.1:4433, loopback-only)
@@ -176,13 +178,15 @@ pub enum HostAdmin {
     },
 }
 
-/// A one-shot local tool (`perigee-host snapshot`, `perigee-host input-test`).
+/// A one-shot local tool (`perigee-host snapshot`, `perigee-host input-test`, `perigee-host outputs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostTool {
     /// Capture one frame of Wayland output `output` and write it to `out` as a PPM.
     Snapshot { out: PathBuf, output: usize },
     /// Create the uinput devices, move the pointer to the centre, click, and type `perigee`.
     InputTest,
+    /// List Wayland compositor outputs with geometry, refresh rate, and scale.
+    Outputs,
     /// Internal (started by `--media follow-seat`): capture output `output` of the compositor
     /// in `XDG_RUNTIME_DIR` and stream raw frames on stdout.
     CaptureWorker { output: usize },
@@ -204,6 +208,8 @@ pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand
         Some("snapshot") => return parse_snapshot_args(&args[1..]).map(HostCommand::Tool),
         Some("input-test") if args.len() == 1 => return Ok(HostCommand::Tool(HostTool::InputTest)),
         Some("input-test") => bail!("input-test takes no arguments"),
+        Some("outputs") if args.len() == 1 => return Ok(HostCommand::Tool(HostTool::Outputs)),
+        Some("outputs") => bail!("outputs takes no arguments"),
         Some("capture-worker") => {
             return parse_capture_worker_args(&args[1..]).map(HostCommand::Tool);
         }
@@ -599,6 +605,10 @@ pub fn run_host_tool(tool: &HostTool) -> Result<String> {
                 std::thread::sleep(Duration::from_millis(200));
                 Ok("moved the pointer to the centre, clicked, and typed \"perigee\"".to_string())
             }
+            HostTool::Outputs => {
+                let monitors = crate::backends::wayland_shm::list_wayland_outputs(None)?;
+                Ok(crate::backends::wayland_shm::format_monitor_list(&monitors))
+            }
             HostTool::CaptureWorker { output } => {
                 use std::io::Write;
 
@@ -636,7 +646,7 @@ pub fn run_host_tool(tool: &HostTool) -> Result<String> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = tool;
-        bail!("snapshot and input-test are Linux only")
+        bail!("snapshot, input-test, and outputs are Linux only")
     }
 }
 
@@ -1417,6 +1427,16 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect();
+        assert!(parse_host_args(&extra, HostOptions::default()).is_err());
+    }
+
+    #[test]
+    fn test_parse_outputs_tool() {
+        assert_eq!(
+            parse_host_args(&["outputs".to_string()], HostOptions::default()).unwrap(),
+            HostCommand::Tool(HostTool::Outputs)
+        );
+        let extra: Vec<String> = ["outputs", "extra"].iter().map(|s| s.to_string()).collect();
         assert!(parse_host_args(&extra, HostOptions::default()).is_err());
     }
 
