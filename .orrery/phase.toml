@@ -1,27 +1,31 @@
 # Written by phased-step.sh new-phase from the plan's Up Next table.
 # Regenerated every phase; edits here are lost.
-phase = "8b"
+phase = "9"
 
 [[queue]]
-step = "8BA"
-item = "TASK-0132"
+step = "9A"
+item = "TASK-0137"
 
 [[queue]]
-step = "8BB"
-item = "TASK-0133"
+step = "9B"
+item = "TASK-0138"
 
 [[queue]]
-step = "8BC"
-item = "TASK-0134"
+step = "9C"
+item = "TASK-0139"
 
 [[queue]]
-step = "8BD"
-item = "TASK-0135"
+step = "9D"
+item = "TASK-0140"
 
 [[queue]]
-step = "8BE"
-item = "TASK-0136"
+step = "9E"
+item = "TASK-0141"
 
 [[queue]]
-user = "8H"
-title = "Live COSMIC service test (5BI) + VA-API AV1 + perigee connect --window check"
+step = "9F"
+item = "TASK-0142"
+
+[[queue]]
+user = "9G"
+title = "Live COSMIC multi-output (outputs, --output), DMA-BUF capture (--capture-mode dmabuf), and vkms headless KMS spike"
