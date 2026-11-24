@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0137"
 type = "task"
 title = "Exercise runtime vaav1enc->av1enc and vaav1dec->av1dec fallback paths through encode()/decode() (BUG-0035, BUG-0036)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "inbox"
 created_at = "2026-11-24T19:30:25Z"
-updated_at = "2026-11-24T19:30:25Z"
+updated_at = "2026-11-24T21:44:30Z"
 source_ref = "STEP 9A"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 5
 iteration_count = 1
+last_timer_session = "TASK-0137@2026-11-24T21:39:27Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-24"
+commit = "a715156"
+summary = "STEP 9A: Exercise runtime AV1 encoder and decoder fallback paths through `encode()` and `decode()` (phased check PASS)"
