@@ -12,6 +12,7 @@ pub mod connect;
 pub mod decode;
 pub mod render;
 pub mod session;
+pub mod window;
 
 pub use audio::*;
 pub use bridge::*;
@@ -19,3 +20,7 @@ pub use connect::*;
 pub use decode::*;
 pub use render::*;
 pub use session::*;
+pub use window::{
+    MIN_VIEWER_HEIGHT, MIN_VIEWER_WIDTH, ViewerWindowConfig, ViewportRect,
+    compute_letterbox_viewport, format_window_title, run_viewer_window,
+};
