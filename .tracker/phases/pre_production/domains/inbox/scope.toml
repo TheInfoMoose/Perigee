@@ -339,7 +339,7 @@ created_at = "2026-11-24T19:30:25Z"
 [[items.tasks]]
 id = "TASK-0142"
 title = "Headless/virtual output vkms probe (headless.rs, perigee-host headless-check) and upstream cosmic-comp spike/ask doc"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-24T19:30:25Z"
 
