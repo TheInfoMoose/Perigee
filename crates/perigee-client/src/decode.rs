@@ -54,11 +54,44 @@ impl ActiveDecoderPipeline {
     }
 }
 
+enum DecodeError {
+    Pipeline(anyhow::Error),
+    TimeoutOrInput(anyhow::Error),
+}
+
+impl DecodeError {
+    fn is_pipeline_error(&self) -> bool {
+        matches!(self, Self::Pipeline(_))
+    }
+
+    fn as_anyhow(&self) -> &anyhow::Error {
+        match self {
+            Self::Pipeline(err) | Self::TimeoutOrInput(err) => err,
+        }
+    }
+
+    fn into_anyhow(self) -> anyhow::Error {
+        match self {
+            Self::Pipeline(err) | Self::TimeoutOrInput(err) => err,
+        }
+    }
+}
+
+fn should_fallback_to_software(
+    element_name: &str,
+    has_decoded_frame: bool,
+    is_keyframe: bool,
+    is_pipeline_error: bool,
+) -> bool {
+    element_name == "vaav1dec" && !has_decoded_frame && is_keyframe && is_pipeline_error
+}
+
 /// Live AV1 decoder backed by GStreamer (`vaav1dec` hardware VA-API when available and enabled,
 /// with automatic software fallback to `av1dec`).
 pub struct GstreamerAv1Decoder {
     element_name: &'static str,
     active: Option<ActiveDecoderPipeline>,
+    has_decoded_frame: bool,
 }
 
 impl GstreamerAv1Decoder {
@@ -87,6 +120,7 @@ impl GstreamerAv1Decoder {
         Ok(Self {
             element_name,
             active: Some(active),
+            has_decoded_frame: false,
         })
     }
 
@@ -186,7 +220,14 @@ impl GstreamerAv1Decoder {
 
     fn ensure_pipeline(&mut self) -> Result<&ActiveDecoderPipeline> {
         if self.active.is_none() {
-            let built = Self::build_pipeline(self.element_name)?;
+            let built = match Self::build_pipeline(self.element_name) {
+                Ok(built) => built,
+                Err(err) if self.element_name == "vaav1dec" => {
+                    self.fallback_to_software(&err);
+                    Self::build_pipeline(self.element_name)?
+                }
+                Err(err) => return Err(err),
+            };
             self.active = Some(built);
         }
         self.active
@@ -194,46 +235,56 @@ impl GstreamerAv1Decoder {
             .ok_or_else(|| anyhow!("GStreamer AV1 decoder pipeline was not initialized"))
     }
 
-    fn decode_once(&mut self, frame: &VideoFrameMessage) -> Result<DecodedFrameSurface> {
+    fn decode_once(
+        &mut self,
+        frame: &VideoFrameMessage,
+    ) -> std::result::Result<DecodedFrameSurface, DecodeError> {
         let mut gst_buf = gst::Buffer::with_size(frame.payload.len())
-            .context("failed to allocate GStreamer buffer for AV1 frame")?;
+            .context("failed to allocate GStreamer buffer for AV1 frame")
+            .map_err(DecodeError::Pipeline)?;
         {
             let buf_mut = gst_buf
                 .get_mut()
-                .ok_or_else(|| anyhow!("newly allocated GStreamer buffer is not writable"))?;
+                .ok_or_else(|| anyhow!("newly allocated GStreamer buffer is not writable"))
+                .map_err(DecodeError::Pipeline)?;
             buf_mut.set_pts(gst::ClockTime::from_useconds(frame.timestamp_us));
             let mut mapped = buf_mut
                 .map_writable()
-                .context("failed to map GStreamer buffer writable")?;
+                .context("failed to map GStreamer buffer writable")
+                .map_err(DecodeError::Pipeline)?;
             mapped.as_mut_slice().copy_from_slice(&frame.payload);
         }
 
         let push_result = {
-            let active = self.ensure_pipeline()?;
+            let active = self.ensure_pipeline().map_err(DecodeError::Pipeline)?;
             active.appsrc.push_buffer(gst_buf)
         };
         if let Err(err) = push_result {
             self.tear_down_pipeline();
-            bail!("failed to push AV1 frame to GStreamer appsrc: {err:?}");
+            return Err(DecodeError::Pipeline(anyhow!(
+                "failed to push AV1 frame to GStreamer appsrc: {err:?}"
+            )));
         }
 
         let sample = {
             let active = self
                 .active
                 .as_ref()
-                .ok_or_else(|| anyhow!("GStreamer AV1 decoder pipeline missing after push"))?;
+                .ok_or_else(|| anyhow!("GStreamer AV1 decoder pipeline missing after push"))
+                .map_err(DecodeError::Pipeline)?;
             match active.appsink.try_pull_sample(PULL_SAMPLE_TIMEOUT) {
                 Some(sample) => Ok(sample),
                 None => {
-                    let err = if let Some(bus_err) = poll_bus_error(&active.pipeline) {
-                        anyhow!("GStreamer AV1 decoder pipeline error: {bus_err}")
+                    if let Some(bus_err) = poll_bus_error(&active.pipeline) {
+                        Err(DecodeError::Pipeline(anyhow!(
+                            "GStreamer AV1 decoder pipeline error: {bus_err}"
+                        )))
                     } else {
-                        anyhow!(
+                        Err(DecodeError::TimeoutOrInput(anyhow!(
                             "timed out waiting for decoded RGBA frame from GStreamer appsink after {}s",
                             PULL_SAMPLE_TIMEOUT.seconds()
-                        )
-                    };
-                    Err(err)
+                        )))
+                    }
                 }
             }
         };
@@ -246,80 +297,86 @@ impl GstreamerAv1Decoder {
             }
         };
 
-        let caps = sample
-            .caps()
-            .ok_or_else(|| anyhow!("GStreamer appsink sample missing caps"))?;
-        let video_info = gst_video::VideoInfo::from_caps(caps)
-            .context("failed to parse decoded RGBA video caps")?;
-        let buffer = sample
-            .buffer()
-            .ok_or_else(|| anyhow!("GStreamer appsink sample missing buffer"))?;
-        let video_frame =
-            gst_video::VideoFrameRef::from_buffer_ref_readable(buffer, &video_info)
-                .map_err(|_| anyhow!("failed to map decoded RGBA video frame readable"))?;
-
-        let width = video_frame.width();
-        let height = video_frame.height();
-        if width == 0 || height == 0 {
-            bail!("decoded RGBA frame has invalid dimensions {width}x{height}");
-        }
-
-        let row_bytes = (width as usize)
-            .checked_mul(4)
-            .ok_or_else(|| anyhow!("decoded frame width {width} overflows RGBA stride"))?;
-        let packed_len = row_bytes
-            .checked_mul(height as usize)
-            .ok_or_else(|| anyhow!("decoded frame size {width}x{height} overflows buffer size"))?;
-
-        let raw_stride = video_frame.plane_stride()[0];
-        if raw_stride < 0 {
-            bail!("decoded RGBA frame has negative stride {raw_stride}");
-        }
-        let stride = raw_stride as usize;
-        if stride < row_bytes {
-            bail!("decoded RGBA frame stride {stride} is smaller than row width {row_bytes}");
-        }
-
-        let plane = video_frame
-            .plane_data(0)
-            .context("decoded RGBA video frame missing plane 0")?;
-
-        let data = if stride == row_bytes {
-            if plane.len() < packed_len {
-                bail!(
-                    "decoded RGBA buffer length {} is smaller than required {packed_len} bytes",
-                    plane.len()
-                );
-            }
-            plane[..packed_len].to_vec()
-        } else {
-            let required = stride
-                .checked_mul((height as usize) - 1)
-                .and_then(|v| v.checked_add(row_bytes))
-                .ok_or_else(|| anyhow!("decoded RGBA strided buffer size overflow"))?;
-            if plane.len() < required {
-                bail!(
-                    "decoded RGBA strided buffer length {} is smaller than required {required} bytes",
-                    plane.len()
-                );
-            }
-            let mut packed = Vec::with_capacity(packed_len);
-            for row in 0..height as usize {
-                let offset = row * stride;
-                packed.extend_from_slice(&plane[offset..offset + row_bytes]);
-            }
-            packed
-        };
-
-        Ok(DecodedFrameSurface {
-            frame_index: frame.frame_id,
-            width,
-            height,
-            format: PixelFormat::Rgba8,
-            data,
-            timestamp_us: frame.timestamp_us,
-        })
+        extract_rgba_surface(frame, &sample).map_err(DecodeError::Pipeline)
     }
+}
+
+fn extract_rgba_surface(
+    frame: &VideoFrameMessage,
+    sample: &gst::Sample,
+) -> Result<DecodedFrameSurface> {
+    let caps = sample
+        .caps()
+        .ok_or_else(|| anyhow!("GStreamer appsink sample missing caps"))?;
+    let video_info =
+        gst_video::VideoInfo::from_caps(caps).context("failed to parse decoded RGBA video caps")?;
+    let buffer = sample
+        .buffer()
+        .ok_or_else(|| anyhow!("GStreamer appsink sample missing buffer"))?;
+    let video_frame = gst_video::VideoFrameRef::from_buffer_ref_readable(buffer, &video_info)
+        .map_err(|_| anyhow!("failed to map decoded RGBA video frame readable"))?;
+
+    let width = video_frame.width();
+    let height = video_frame.height();
+    if width == 0 || height == 0 {
+        bail!("decoded RGBA frame has invalid dimensions {width}x{height}");
+    }
+
+    let row_bytes = (width as usize)
+        .checked_mul(4)
+        .ok_or_else(|| anyhow!("decoded frame width {width} overflows RGBA stride"))?;
+    let packed_len = row_bytes
+        .checked_mul(height as usize)
+        .ok_or_else(|| anyhow!("decoded frame size {width}x{height} overflows buffer size"))?;
+
+    let raw_stride = video_frame.plane_stride()[0];
+    if raw_stride < 0 {
+        bail!("decoded RGBA frame has negative stride {raw_stride}");
+    }
+    let stride = raw_stride as usize;
+    if stride < row_bytes {
+        bail!("decoded RGBA frame stride {stride} is smaller than row width {row_bytes}");
+    }
+
+    let plane = video_frame
+        .plane_data(0)
+        .context("decoded RGBA video frame missing plane 0")?;
+
+    let data = if stride == row_bytes {
+        if plane.len() < packed_len {
+            bail!(
+                "decoded RGBA buffer length {} is smaller than required {packed_len} bytes",
+                plane.len()
+            );
+        }
+        plane[..packed_len].to_vec()
+    } else {
+        let required = stride
+            .checked_mul((height as usize) - 1)
+            .and_then(|v| v.checked_add(row_bytes))
+            .ok_or_else(|| anyhow!("decoded RGBA strided buffer size overflow"))?;
+        if plane.len() < required {
+            bail!(
+                "decoded RGBA strided buffer length {} is smaller than required {required} bytes",
+                plane.len()
+            );
+        }
+        let mut packed = Vec::with_capacity(packed_len);
+        for row in 0..height as usize {
+            let offset = row * stride;
+            packed.extend_from_slice(&plane[offset..offset + row_bytes]);
+        }
+        packed
+    };
+
+    Ok(DecodedFrameSurface {
+        frame_index: frame.frame_id,
+        width,
+        height,
+        format: PixelFormat::Rgba8,
+        data,
+        timestamp_us: frame.timestamp_us,
+    })
 }
 
 impl Drop for GstreamerAv1Decoder {
@@ -341,12 +398,24 @@ impl VideoDecoder for GstreamerAv1Decoder {
         }
 
         match self.decode_once(frame) {
-            Ok(surface) => Ok(surface),
-            Err(err) if self.element_name == "vaav1dec" => {
-                self.fallback_to_software(&err);
-                self.decode_once(frame)
+            Ok(surface) => {
+                self.has_decoded_frame = true;
+                Ok(surface)
             }
-            Err(err) => Err(err),
+            Err(err)
+                if should_fallback_to_software(
+                    self.element_name,
+                    self.has_decoded_frame,
+                    frame.is_keyframe,
+                    err.is_pipeline_error(),
+                ) =>
+            {
+                self.fallback_to_software(err.as_anyhow());
+                let surface = self.decode_once(frame).map_err(DecodeError::into_anyhow)?;
+                self.has_decoded_frame = true;
+                Ok(surface)
+            }
+            Err(err) => Err(err.into_anyhow()),
         }
     }
 }
@@ -484,5 +553,14 @@ mod tests {
             payload: vec![0x00, 0x00, 0x00, 0x01, 0x67],
         };
         assert!(decoder.decode(&h264_frame).is_err());
+    }
+
+    #[test]
+    fn test_should_fallback_to_software_preserves_vaav1dec_on_corrupt_or_orphaned_frames() {
+        assert!(should_fallback_to_software("vaav1dec", false, true, true));
+        assert!(!should_fallback_to_software("vaav1dec", false, true, false));
+        assert!(!should_fallback_to_software("vaav1dec", false, false, true));
+        assert!(!should_fallback_to_software("vaav1dec", true, true, true));
+        assert!(!should_fallback_to_software("av1dec", false, true, true));
     }
 }
