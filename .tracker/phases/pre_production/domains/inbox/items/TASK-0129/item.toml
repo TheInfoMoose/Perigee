@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0129"
 type = "task"
 title = "perigee connect --window CLI flag and end-to-end AV1 loopback test"
-status = "pending"
+status = "closed"
 severity = "medium"
 scope_ref = "inbox"
 created_at = "2026-11-23T03:47:49Z"
-updated_at = "2026-11-24T05:41:06Z"
+updated_at = "2026-11-24T05:53:27Z"
 source_ref = "STEP 8G"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 55
 iteration_count = 1
+last_timer_session = "TASK-0129@2026-11-24T04:57:59Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-24"
+commit = "6086669"
+summary = "STEP 8G: `perigee connect --window` CLI flag and end-to-end AV1 loopback test (phased check PASS)"
