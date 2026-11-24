@@ -1,5 +1,6 @@
 //! Host accept loop and graceful shutdown.
 
+use crate::backends::{CaptureMode, parse_capture_mode};
 use crate::{HostCodec, MediaMode, PerigeeHostDaemon};
 use anyhow::{Context, Result, anyhow, bail};
 use perigee_net::{
@@ -33,7 +34,7 @@ Usage: perigee-host [run] [OPTIONS]
        perigee-host trust list [--config-dir <DIR>]
        perigee-host trust remove <KEY> [--config-dir <DIR>]
        perigee-host pair [--bind <ADDR>] [--ttl <SECONDS>] [--config-dir <DIR>]
-       perigee-host snapshot --out <FILE.ppm> [--output <INDEX>]
+       perigee-host snapshot --out <FILE.ppm> [--output <INDEX>] [--capture-mode <auto|dmabuf|shm>]
        perigee-host input-test
        perigee-host outputs
 
@@ -62,6 +63,8 @@ Options:
   --codec <CODEC>       raw (default; uncompressed frames) or av1 (GStreamer AV1 encoder,
                         VA-API preferred with software fallback, 30 fps)
   --output <INDEX>      Wayland output index to capture for live/follow-seat (default: 0)
+  --capture-mode <MODE> Wayland capture backend for snapshot/capture-worker: auto (default;
+                        DMA-BUF with automatic wl_shm fallback), dmabuf, or shm
   -h, --help            Print this help text and exit
   -V, --version         Print version information and exit
 
@@ -194,14 +197,21 @@ pub enum HostAdmin {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostTool {
     /// Capture one frame of Wayland output `output` and write it to `out` as a PPM.
-    Snapshot { out: PathBuf, output: usize },
+    Snapshot {
+        out: PathBuf,
+        output: usize,
+        capture_mode: CaptureMode,
+    },
     /// Create the uinput devices, move the pointer to the centre, click, and type `perigee`.
     InputTest,
     /// List Wayland compositor outputs with geometry, refresh rate, and scale.
     Outputs,
     /// Internal (started by `--media follow-seat`): capture output `output` of the compositor
     /// in `XDG_RUNTIME_DIR` and stream raw frames on stdout.
-    CaptureWorker { output: usize },
+    CaptureWorker {
+        output: usize,
+        capture_mode: CaptureMode,
+    },
 }
 
 /// Parsed arguments for `perigee-host pair`.
@@ -404,6 +414,7 @@ fn parse_host_pair(args: &[String]) -> Result<PairArgs> {
 fn parse_snapshot_args(args: &[String]) -> Result<HostTool> {
     let mut out = None;
     let mut output = 0usize;
+    let mut capture_mode = CaptureMode::Auto;
     let mut i = 0;
     while i < args.len() {
         let flag = args[i].as_str();
@@ -417,24 +428,53 @@ fn parse_snapshot_args(args: &[String]) -> Result<HostTool> {
                     format!("invalid --output '{value}': expected an output index")
                 })?;
             }
+            "--capture-mode" => {
+                capture_mode = parse_capture_mode(value)
+                    .with_context(|| format!("invalid --capture-mode '{value}'"))?;
+            }
             other => bail!("unknown argument '{other}'; run with --help"),
         }
         i += 2;
     }
     let out = out.ok_or_else(|| anyhow!("snapshot needs --out <FILE>"))?;
-    Ok(HostTool::Snapshot { out, output })
+    Ok(HostTool::Snapshot {
+        out,
+        output,
+        capture_mode,
+    })
 }
 
 fn parse_capture_worker_args(args: &[String]) -> Result<HostTool> {
-    match args {
-        [] => Ok(HostTool::CaptureWorker { output: 0 }),
-        [flag, value] if flag == "--output" => Ok(HostTool::CaptureWorker {
-            output: value
-                .parse()
-                .with_context(|| format!("invalid --output '{value}': expected an output index"))?,
-        }),
-        _ => bail!("usage: perigee-host capture-worker [--output <INDEX>]"),
+    let mut output = 0usize;
+    let mut capture_mode = CaptureMode::Auto;
+    let mut i = 0;
+    while i < args.len() {
+        let flag = args[i].as_str();
+        let Some(value) = args.get(i + 1).filter(|v| !v.is_empty()) else {
+            bail!(
+                "usage: perigee-host capture-worker [--output <INDEX>] [--capture-mode <auto|dmabuf|shm>]"
+            );
+        };
+        match flag {
+            "--output" => {
+                output = value.parse().with_context(|| {
+                    format!("invalid --output '{value}': expected an output index")
+                })?;
+            }
+            "--capture-mode" => {
+                capture_mode = parse_capture_mode(value)
+                    .with_context(|| format!("invalid --capture-mode '{value}'"))?;
+            }
+            _ => bail!(
+                "usage: perigee-host capture-worker [--output <INDEX>] [--capture-mode <auto|dmabuf|shm>]"
+            ),
+        }
+        i += 2;
     }
+    Ok(HostTool::CaptureWorker {
+        output,
+        capture_mode,
+    })
 }
 
 /// Runs a key-management subcommand and returns the text to print.
@@ -569,14 +609,22 @@ pub fn run_host_tool(tool: &HostTool) -> Result<String> {
         use perigee_protocol::{ElementState, InputEvent, KeyModifiers, MouseButtonCode};
 
         match tool {
-            HostTool::Snapshot { out, output } => {
+            HostTool::Snapshot {
+                out,
+                output,
+                capture_mode,
+            } => {
                 let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
                     .map(PathBuf::from)
                     .context(
                         "snapshot needs XDG_RUNTIME_DIR (run it inside the Wayland session)",
                     )?;
-                let mut capturer =
-                    crate::backends::WaylandShmCapturer::connect(None, &runtime_dir, *output)?;
+                let mut capturer = crate::backends::WaylandCapturer::connect(
+                    None,
+                    &runtime_dir,
+                    *output,
+                    *capture_mode,
+                )?;
                 let frame = capturer.capture_next_frame()?;
                 let ppm = crate::encode_ppm(
                     frame.width,
@@ -588,9 +636,10 @@ pub fn run_host_tool(tool: &HostTool) -> Result<String> {
                 std::fs::write(out, ppm)
                     .with_context(|| format!("failed to write {}", out.display()))?;
                 Ok(format!(
-                    "wrote {}x{} frame of output {output} to {}",
+                    "wrote {}x{} frame of output {output} ({}) to {}",
                     frame.width,
                     frame.height,
+                    capturer.mode_name(),
                     out.display()
                 ))
             }
@@ -630,7 +679,10 @@ pub fn run_host_tool(tool: &HostTool) -> Result<String> {
                 let monitors = crate::backends::wayland_shm::list_wayland_outputs(None)?;
                 Ok(crate::backends::wayland_shm::format_monitor_list(&monitors))
             }
-            HostTool::CaptureWorker { output } => {
+            HostTool::CaptureWorker {
+                output,
+                capture_mode,
+            } => {
                 use std::io::Write;
 
                 let _lifeline = watch_lifeline(std::io::stdin(), || {
@@ -642,10 +694,11 @@ pub fn run_host_tool(tool: &HostTool) -> Result<String> {
                     .map(PathBuf::from)
                     .context("capture-worker needs XDG_RUNTIME_DIR")?;
                 let socket = crate::seat::find_wayland_socket(&runtime_dir)?;
-                let mut capturer = crate::backends::WaylandShmCapturer::connect(
+                let mut capturer = crate::backends::WaylandCapturer::connect(
                     Some(&socket),
                     &runtime_dir,
                     *output,
+                    *capture_mode,
                 )?;
                 let mut stdout = std::io::stdout().lock();
                 loop {
@@ -1477,6 +1530,7 @@ mod tests {
             HostCommand::Tool(HostTool::Snapshot {
                 out: PathBuf::from("/tmp/perigee-test/frame.ppm"),
                 output: 1,
+                capture_mode: CaptureMode::Auto,
             })
         );
         let no_out: Vec<String> = ["snapshot"].iter().map(|s| s.to_string()).collect();
@@ -1506,7 +1560,10 @@ mod tests {
     fn test_parse_capture_worker() {
         assert_eq!(
             parse_host_args(&["capture-worker".to_string()], HostOptions::default()).unwrap(),
-            HostCommand::Tool(HostTool::CaptureWorker { output: 0 })
+            HostCommand::Tool(HostTool::CaptureWorker {
+                output: 0,
+                capture_mode: CaptureMode::Auto,
+            })
         );
         let two: Vec<String> = ["capture-worker", "--output", "2"]
             .iter()
@@ -1514,13 +1571,85 @@ mod tests {
             .collect();
         assert_eq!(
             parse_host_args(&two, HostOptions::default()).unwrap(),
-            HostCommand::Tool(HostTool::CaptureWorker { output: 2 })
+            HostCommand::Tool(HostTool::CaptureWorker {
+                output: 2,
+                capture_mode: CaptureMode::Auto,
+            })
         );
         let bad: Vec<String> = ["capture-worker", "--bogus"]
             .iter()
             .map(|s| s.to_string())
             .collect();
         assert!(parse_host_args(&bad, HostOptions::default()).is_err());
+    }
+
+    #[test]
+    fn test_parse_capture_mode_and_tool_args() {
+        assert_eq!(parse_capture_mode("auto").unwrap(), CaptureMode::Auto);
+        assert_eq!(parse_capture_mode("AUTO").unwrap(), CaptureMode::Auto);
+        assert_eq!(parse_capture_mode("dmabuf").unwrap(), CaptureMode::Dmabuf);
+        assert_eq!(parse_capture_mode("DmaBuf").unwrap(), CaptureMode::Dmabuf);
+        assert_eq!(parse_capture_mode("shm").unwrap(), CaptureMode::Shm);
+        assert_eq!(parse_capture_mode("SHM").unwrap(), CaptureMode::Shm);
+        assert!(parse_capture_mode("vulkan").is_err());
+
+        let s = |items: &[&str]| items.iter().map(|v| (*v).to_string()).collect::<Vec<_>>();
+
+        assert_eq!(
+            parse_host_args(
+                &s(&[
+                    "snapshot",
+                    "--out",
+                    "/tmp/a.ppm",
+                    "--capture-mode",
+                    "dmabuf"
+                ]),
+                HostOptions::default(),
+            )
+            .unwrap(),
+            HostCommand::Tool(HostTool::Snapshot {
+                out: PathBuf::from("/tmp/a.ppm"),
+                output: 0,
+                capture_mode: CaptureMode::Dmabuf,
+            })
+        );
+        assert_eq!(
+            parse_host_args(
+                &s(&["snapshot", "--out", "/tmp/a.ppm"]),
+                HostOptions::default()
+            )
+            .unwrap(),
+            HostCommand::Tool(HostTool::Snapshot {
+                out: PathBuf::from("/tmp/a.ppm"),
+                output: 0,
+                capture_mode: CaptureMode::Auto,
+            })
+        );
+        assert_eq!(
+            parse_host_args(
+                &s(&["capture-worker", "--output", "1", "--capture-mode", "shm"]),
+                HostOptions::default(),
+            )
+            .unwrap(),
+            HostCommand::Tool(HostTool::CaptureWorker {
+                output: 1,
+                capture_mode: CaptureMode::Shm,
+            })
+        );
+        assert_eq!(
+            parse_host_args(&s(&["capture-worker"]), HostOptions::default()).unwrap(),
+            HostCommand::Tool(HostTool::CaptureWorker {
+                output: 0,
+                capture_mode: CaptureMode::Auto,
+            })
+        );
+        assert!(
+            parse_host_args(
+                &s(&["snapshot", "--out", "/tmp/a.ppm", "--capture-mode", "bogus"]),
+                HostOptions::default(),
+            )
+            .is_err()
+        );
     }
 
     #[cfg(target_os = "linux")]

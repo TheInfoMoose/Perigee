@@ -5,6 +5,7 @@ pub mod linux_input;
 pub mod macos;
 #[cfg(target_os = "linux")]
 pub mod uinput;
+pub mod wayland_dmabuf;
 #[cfg(target_os = "linux")]
 pub mod wayland_shm;
 pub mod windows;
@@ -37,6 +38,11 @@ pub use macos::{
 pub use uinput::{
     UINPUT_ABS_MAX, UinputInjector, compute_virtual_desktop_bounds, encode_input_event,
     encode_uinput_user_dev, map_output_pointer_to_abs, map_relative_pointer_delta,
+};
+pub use wayland_dmabuf::{CaptureMode, parse_capture_mode};
+#[cfg(target_os = "linux")]
+pub use wayland_dmabuf::{
+    ExtDmabufCapturer, WaylandCapturer, pick_dmabuf_format, resolve_render_node_from_dev_t,
 };
 #[cfg(target_os = "linux")]
 pub use wayland_shm::{
