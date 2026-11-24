@@ -4,11 +4,11 @@ schema_version = 2
 id = "TASK-0129"
 type = "task"
 title = "perigee connect --window CLI flag and end-to-end AV1 loopback test"
-status = "open"
+status = "pending"
 severity = "medium"
 scope_ref = "inbox"
 created_at = "2026-11-23T03:47:49Z"
-updated_at = "2026-11-23T03:47:49Z"
+updated_at = "2026-11-24T05:19:58Z"
 source_ref = "STEP 8G"
 
 [effort]
