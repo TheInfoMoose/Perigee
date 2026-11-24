@@ -257,6 +257,10 @@ fn parse_connect_args(args: &[String]) -> Result<CliCommand> {
         bail!("connect needs a target, e.g. perigee connect 192.0.2.10:4433");
     };
 
+    if window && dump_frame.is_some() {
+        bail!("--dump-frame cannot be used with --window");
+    }
+
     Ok(CliCommand::Connect(ConnectArgs {
         target,
         interface,
@@ -876,5 +880,34 @@ mod tests {
             panic!("expected Connect, got {without_window:?}");
         };
         assert!(!args.window);
+    }
+
+    #[test]
+    fn test_parse_connect_rejects_window_with_dump_frame() {
+        let base = HostOptions::default();
+
+        for args in [
+            &[
+                "connect",
+                "192.0.2.10",
+                "--window",
+                "--dump-frame",
+                "/tmp/out.ppm",
+            ][..],
+            &[
+                "connect",
+                "192.0.2.10",
+                "--dump-frame",
+                "/tmp/out.ppm",
+                "--window",
+            ][..],
+        ] {
+            let err = parse_cli_args(&s(args), base.clone()).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("--dump-frame") && msg.contains("--window"),
+                "expected error mentioning --dump-frame and --window, got: {msg}"
+            );
+        }
     }
 }

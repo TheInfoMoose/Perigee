@@ -278,7 +278,9 @@ async fn run_connect_window(
         title: format!("Perigee - {target}"),
         ..Default::default()
     };
-    let window_result = run_viewer_window(viewer_config, video_rx, window_shutdown_tx);
+    let window_result = tokio::task::block_in_place(|| {
+        run_viewer_window(viewer_config, video_rx, window_shutdown_tx)
+    });
     let host_terminated = lifecycle_task.await?;
     window_result?;
 
