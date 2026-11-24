@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0138"
 type = "task"
 title = "Multi-output Wayland geometry (xdg-output-unstable-v1 + wl_output) and perigee-host outputs inspection"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "inbox"
 created_at = "2026-11-24T19:30:25Z"
-updated_at = "2026-11-24T19:30:25Z"
+updated_at = "2026-11-24T21:48:10Z"
 source_ref = "STEP 9B"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 3
 iteration_count = 1
+last_timer_session = "TASK-0138@2026-11-24T21:44:30Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-24"
+commit = "681e423"
+summary = "STEP 9B: Multi-output Wayland geometry (`xdg-output-unstable-v1` + `wl_output`) and `perigee-host outputs` (phased check PASS)"
