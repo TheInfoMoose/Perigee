@@ -135,9 +135,27 @@ impl HostSessionEngine {
         let frame_interval = Duration::from_nanos(1_000_000_000 / u64::from(fps.max(1)));
         let (capturer, encoder, input_injector, screen_sink, capture_stop) = match media {
             MediaMode::StandIn => {
-                let width = encoder_config.width.max(1);
-                let height = encoder_config.height.max(1);
-                let capturer = Self::build_frame_capturer(backend, 1, width, height)
+                let (width, height, capturer_backend) = match codec {
+                    HostCodec::Av1 => {
+                        encoder_config.width = encoder_config.width.clamp(1, 128);
+                        encoder_config.height = encoder_config.height.clamp(1, 128);
+                        let capturer_backend = match backend {
+                            CaptureBackendType::X11Fallback => CaptureBackendType::WaylandPipeWire,
+                            other => other,
+                        };
+                        (
+                            encoder_config.width,
+                            encoder_config.height,
+                            capturer_backend,
+                        )
+                    }
+                    HostCodec::Raw => (
+                        encoder_config.width.max(1),
+                        encoder_config.height.max(1),
+                        backend,
+                    ),
+                };
+                let capturer = Self::build_frame_capturer(capturer_backend, 1, width, height)
                     .context("failed to start the frame capturer for this session")?;
                 let encoder: Box<dyn VideoEncoder> = match codec {
                     HostCodec::Raw => {

@@ -65,12 +65,24 @@ impl GstreamerAv1Decoder {
     /// Creates a new GStreamer AV1 decoder, initializing GStreamer and building the decode pipeline.
     pub fn new(prefer_hardware: bool) -> Result<Self> {
         ensure_gst_init()?;
-        let element_name = if prefer_hardware && gst::ElementFactory::find("vaav1dec").is_some() {
+        let mut element_name = if prefer_hardware && gst::ElementFactory::find("vaav1dec").is_some()
+        {
             "vaav1dec"
         } else {
             "av1dec"
         };
-        let active = Self::build_pipeline(element_name)?;
+        let active = match Self::build_pipeline(element_name) {
+            Ok(active) => active,
+            Err(err) if element_name == "vaav1dec" => {
+                warn!(
+                    error = %err,
+                    "Hardware vaav1dec pipeline failed to build; falling back to software av1dec"
+                );
+                element_name = "av1dec";
+                Self::build_pipeline(element_name)?
+            }
+            Err(err) => return Err(err),
+        };
         info!(element = element_name, "Initialized GstreamerAv1Decoder");
         Ok(Self {
             element_name,
@@ -89,6 +101,15 @@ impl GstreamerAv1Decoder {
         }
     }
 
+    fn fallback_to_software(&mut self, reason: &anyhow::Error) {
+        warn!(
+            error = %reason,
+            "Hardware vaav1dec failed at runtime; falling back to software av1dec"
+        );
+        self.tear_down_pipeline();
+        self.element_name = "av1dec";
+    }
+
     fn build_pipeline(element_name: &'static str) -> Result<ActiveDecoderPipeline> {
         let pipeline = gst::Pipeline::new();
 
@@ -102,6 +123,11 @@ impl GstreamerAv1Decoder {
             .field("alignment", "tu")
             .build();
         appsrc.set_caps(Some(&src_caps));
+
+        let av1parse = gst::ElementFactory::make("av1parse")
+            .name("perigee-av1-dec-parse")
+            .build()
+            .context("failed to create GStreamer element `av1parse`")?;
 
         let decoder = gst::ElementFactory::make(element_name)
             .name("perigee-av1-dec")
@@ -126,6 +152,7 @@ impl GstreamerAv1Decoder {
         pipeline
             .add_many([
                 appsrc.upcast_ref(),
+                &av1parse,
                 &decoder,
                 &videoconvert,
                 appsink.upcast_ref(),
@@ -134,6 +161,7 @@ impl GstreamerAv1Decoder {
 
         gst::Element::link_many([
             appsrc.upcast_ref(),
+            &av1parse,
             &decoder,
             &videoconvert,
             appsink.upcast_ref(),
@@ -165,26 +193,8 @@ impl GstreamerAv1Decoder {
             .as_ref()
             .ok_or_else(|| anyhow!("GStreamer AV1 decoder pipeline was not initialized"))
     }
-}
 
-impl Drop for GstreamerAv1Decoder {
-    fn drop(&mut self) {
-        self.tear_down_pipeline();
-    }
-}
-
-impl VideoDecoder for GstreamerAv1Decoder {
-    fn decode(&mut self, frame: &VideoFrameMessage) -> Result<DecodedFrameSurface> {
-        if frame.codec != VideoCodec::AV1 {
-            bail!(
-                "GstreamerAv1Decoder only supports VideoCodec::AV1, got {:?}",
-                frame.codec
-            );
-        }
-        if frame.payload.is_empty() {
-            bail!("cannot decode empty AV1 frame payload");
-        }
-
+    fn decode_once(&mut self, frame: &VideoFrameMessage) -> Result<DecodedFrameSurface> {
         let mut gst_buf = gst::Buffer::with_size(frame.payload.len())
             .context("failed to allocate GStreamer buffer for AV1 frame")?;
         {
@@ -309,6 +319,35 @@ impl VideoDecoder for GstreamerAv1Decoder {
             data,
             timestamp_us: frame.timestamp_us,
         })
+    }
+}
+
+impl Drop for GstreamerAv1Decoder {
+    fn drop(&mut self) {
+        self.tear_down_pipeline();
+    }
+}
+
+impl VideoDecoder for GstreamerAv1Decoder {
+    fn decode(&mut self, frame: &VideoFrameMessage) -> Result<DecodedFrameSurface> {
+        if frame.codec != VideoCodec::AV1 {
+            bail!(
+                "GstreamerAv1Decoder only supports VideoCodec::AV1, got {:?}",
+                frame.codec
+            );
+        }
+        if frame.payload.is_empty() {
+            bail!("cannot decode empty AV1 frame payload");
+        }
+
+        match self.decode_once(frame) {
+            Ok(surface) => Ok(surface),
+            Err(err) if self.element_name == "vaav1dec" => {
+                self.fallback_to_software(&err);
+                self.decode_once(frame)
+            }
+            Err(err) => Err(err),
+        }
     }
 }
 

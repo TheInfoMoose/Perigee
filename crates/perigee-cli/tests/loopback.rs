@@ -7,12 +7,12 @@ use std::time::Duration;
 
 use perigee_cli::{ClientPairArgs, ConnectArgs, client_auth_for, run_client_pair};
 use perigee_client::{ConnectOptions, SessionState, connect};
-use perigee_host::{HostOptions, bind_host, run_host};
+use perigee_host::{HostCodec, HostOptions, MediaMode, bind_host, run_host};
 use perigee_net::{
     ClientAuth, IDENTITY_FILE_NAME, NODE_KEY_LEN, NodeIdentity, PairingWindow,
     TRUSTED_CLIENTS_FILE_NAME, TrustedKeys,
 };
-use perigee_protocol::InputEvent;
+use perigee_protocol::{InputEvent, PixelFormat};
 use tokio::sync::oneshot;
 
 fn trusted_options(
@@ -239,6 +239,7 @@ async fn test_pairing_then_connect() {
         host_key: None,
         config_dir: Some(client_dir.clone()),
         dump_frame: None,
+        window: false,
     };
     let auth = client_auth_for(&connect_args).expect("auth from the pins pairing wrote");
     let session = tokio::time::timeout(
@@ -257,4 +258,82 @@ async fn test_pairing_then_connect() {
         .expect("host task panicked")
         .expect("host exits cleanly");
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+async fn test_real_host_and_client_av1_roundtrip() {
+    let config_dir =
+        std::env::temp_dir().join(format!("perigee-loopback-av1-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&config_dir);
+    let client = Arc::new(NodeIdentity::generate().expect("client identity"));
+    TrustedKeys::load(config_dir.join(TRUSTED_CLIENTS_FILE_NAME))
+        .expect("load trust file")
+        .add(client.public_key(), "loopback-av1-client")
+        .expect("trust the loopback client");
+
+    let host_opts = HostOptions {
+        bind_addr: "127.0.0.1:0".parse().expect("valid loopback addr"),
+        config_dir: Some(config_dir.clone()),
+        media: MediaMode::StandIn,
+        codec: HostCodec::Av1,
+        ..Default::default()
+    };
+    let (daemon, listener) = bind_host(&host_opts).expect("bind_host should succeed");
+    let addr = listener
+        .local_addr()
+        .expect("listener.local_addr should succeed");
+    let host_key = NodeIdentity::load_or_create(&config_dir.join(IDENTITY_FILE_NAME))
+        .expect("host identity")
+        .public_key();
+
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let daemon_for_host = daemon.clone();
+    let host_task = tokio::spawn(async move {
+        run_host(daemon_for_host, listener, async {
+            let _ = shutdown_rx.await;
+        })
+        .await
+    });
+
+    let mut session = tokio::time::timeout(
+        Duration::from_secs(5),
+        connect(trusted_options(&addr, &client, host_key)),
+    )
+    .await
+    .expect("connect timed out")
+    .expect("connect should succeed");
+
+    assert_eq!(session.state(), SessionState::Active);
+
+    let mut video_rx = session
+        .take_video_rx()
+        .expect("video_rx should be available");
+
+    for frame_num in 1..=2 {
+        let frame = tokio::time::timeout(Duration::from_secs(10), video_rx.recv())
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for decoded AV1 frame {frame_num}"))
+            .unwrap_or_else(|| {
+                panic!("video_rx closed before yielding decoded AV1 frame {frame_num}")
+            });
+        assert_eq!(frame.format, PixelFormat::Rgba8);
+        assert!(frame.width > 0);
+        assert!(frame.height > 0);
+        assert_eq!(frame.data.len(), (frame.width * frame.height * 4) as usize);
+    }
+
+    tokio::time::timeout(Duration::from_secs(5), session.disconnect("av1 test done"))
+        .await
+        .expect("session.disconnect timed out");
+    assert!(session.bridge.tasks_finished());
+
+    let _ = shutdown_tx.send(());
+    let host_result = tokio::time::timeout(Duration::from_secs(5), host_task)
+        .await
+        .expect("run_host timed out on shutdown")
+        .expect("run_host task panicked");
+    assert!(host_result.is_ok());
+    assert_eq!(daemon.active_session_count().await, 0);
+
+    let _ = std::fs::remove_dir_all(&config_dir);
 }

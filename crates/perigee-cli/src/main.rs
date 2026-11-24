@@ -4,12 +4,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use perigee_cli::{
     CliCommand, ConnectArgs, USAGE, client_auth_for, resolve_cli_command, run_client_admin,
     run_client_pair,
 };
-use perigee_client::{ConnectOptions, SessionState, connect};
+use perigee_client::{
+    ClientSession, ConnectOptions, SessionState, ViewerWindowConfig, connect, run_viewer_window,
+};
 use perigee_host::{
     HOST_USAGE, HostCommand, bind_host, run_host, run_host_admin, run_host_pair, run_host_tool,
     shutdown_signal,
@@ -89,6 +91,10 @@ async fn run_connect(args: ConnectArgs) -> Result<()> {
         "connected to {}; host node key {}",
         session.target_addr, host_key
     );
+
+    if args.window {
+        return run_connect_window(session, args.target, args.run_for).await;
+    }
 
     let frame_count = Arc::new(AtomicU64::new(0));
     if let Some(mut video_rx) = session.take_video_rx() {
@@ -189,5 +195,96 @@ async fn run_connect(args: ConnectArgs) -> Result<()> {
 
     session.disconnect("user exit").await;
     println!("disconnected");
+    Ok(())
+}
+
+async fn run_connect_window(
+    mut session: ClientSession,
+    target: String,
+    run_for: Option<Duration>,
+) -> Result<()> {
+    let video_rx = session
+        .take_video_rx()
+        .ok_or_else(|| anyhow!("client session video receiver is unavailable"))?;
+
+    let (window_shutdown_tx, mut window_shutdown_rx) = tokio::sync::watch::channel(false);
+
+    let lifecycle_task = tokio::spawn(async move {
+        let shutdown = shutdown_signal();
+        tokio::pin!(shutdown);
+
+        let run_for_deadline = run_for.map(|d| tokio::time::Instant::now() + d);
+
+        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        tick.tick().await;
+
+        let mut state_rx = session.state_rx.clone();
+
+        let host_terminated: Option<String> = loop {
+            if let SessionState::Terminated { reason } = state_rx.borrow_and_update().clone() {
+                break Some(reason);
+            }
+
+            let sleep_until_for = async {
+                match run_for_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            };
+
+            tokio::select! {
+                biased;
+                _ = &mut shutdown => break None,
+                _ = sleep_until_for => break None,
+                changed = window_shutdown_rx.changed() => {
+                    if changed.is_err() || *window_shutdown_rx.borrow() {
+                        break None;
+                    }
+                }
+                changed = state_rx.changed() => {
+                    if changed.is_err() {
+                        break Some(String::from("session state channel closed"));
+                    }
+                    if let SessionState::Terminated { reason } = state_rx.borrow_and_update().clone() {
+                        break Some(reason);
+                    }
+                }
+                _ = tick.tick() => {
+                    let state = session.state();
+                    let (current_fps, rtt_ms) = {
+                        let m = session.bridge.pipeline.metrics.lock().await;
+                        (m.current_fps, m.rtt_ms)
+                    };
+                    println!(
+                        "state={state:?} fps={current_fps:.1} rtt_ms={rtt_ms:.1}"
+                    );
+                }
+            }
+        };
+
+        if let Some(reason) = host_terminated {
+            session.disconnect("host ended session").await;
+            println!("{reason}");
+            return Some(reason);
+        }
+
+        session.disconnect("user exit").await;
+        println!("disconnected");
+        None
+    });
+
+    let viewer_config = ViewerWindowConfig {
+        title: format!("Perigee - {target}"),
+        ..Default::default()
+    };
+    let window_result = run_viewer_window(viewer_config, video_rx, window_shutdown_tx);
+    let host_terminated = lifecycle_task.await?;
+    window_result?;
+
+    if host_terminated.is_some() {
+        std::process::exit(1);
+    }
+
     Ok(())
 }

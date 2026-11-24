@@ -16,7 +16,7 @@ use perigee_net::{
 pub const USAGE: &str = "\
 Usage:
   perigee connect <HOST[:PORT]> [--host-key KEY] [--config-dir DIR] [--interface NAME]
-                  [--for SECONDS] [--timeout SECONDS]
+                  [--for SECONDS] [--timeout SECONDS] [--window]
   perigee identity [--config-dir DIR]
   perigee trust add <HOST[:PORT]> <KEY> [--config-dir DIR]
   perigee trust list [--config-dir DIR]
@@ -43,6 +43,7 @@ Connect options:
   --for <SECONDS>        Disconnect cleanly after whole SECONDS have elapsed
   --timeout <SECONDS>    Handshake timeout in whole SECONDS (default: 5)
   --dump-frame <FILE>    Write the first received frame to FILE as a PPM (raw frames only)
+  --window               Open a bare wgpu viewer window to display the live remote desktop
 
 Host options:
   --bind <ADDR>          UDP socket bind address (default: 127.0.0.1:4433)
@@ -50,6 +51,7 @@ Host options:
   --name <NODE>          Host node identifier (default: perigee-host-node)
   --config-dir <DIR>     Directory holding identity.key and trusted_clients
   --media <MODE>         standin (default), live or follow-seat (see perigee-host --help)
+  --codec <CODEC>        raw (default) or av1 (see perigee-host --help)
 
 General options:
   -h, --help             Print this help text and exit
@@ -76,6 +78,8 @@ pub struct ConnectArgs {
     pub config_dir: Option<PathBuf>,
     /// Write the first received frame to this PPM file (`--dump-frame`).
     pub dump_frame: Option<PathBuf>,
+    /// Open a bare `wgpu` viewer window (`--window`).
+    pub window: bool,
 }
 
 /// A `perigee` client key-management subcommand.
@@ -165,12 +169,17 @@ fn parse_connect_args(args: &[String]) -> Result<CliCommand> {
     let mut host_key: Option<[u8; NODE_KEY_LEN]> = None;
     let mut config_dir: Option<PathBuf> = None;
     let mut dump_frame: Option<PathBuf> = None;
+    let mut window = false;
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "-h" | "--help" => return Ok(CliCommand::Help),
             "-V" | "--version" => return Ok(CliCommand::Version),
+            "--window" => {
+                window = true;
+                i += 1;
+            }
             "--interface" => {
                 let val = args
                     .get(i + 1)
@@ -256,6 +265,7 @@ fn parse_connect_args(args: &[String]) -> Result<CliCommand> {
         host_key,
         config_dir,
         dump_frame,
+        window,
     }))
 }
 
@@ -463,6 +473,7 @@ mod tests {
                 host_key: None,
                 config_dir: None,
                 dump_frame: None,
+                window: false,
             })
         );
 
@@ -490,6 +501,7 @@ mod tests {
                 host_key: None,
                 config_dir: None,
                 dump_frame: None,
+                window: false,
             })
         );
     }
@@ -662,6 +674,7 @@ mod tests {
             host_key: None,
             config_dir: Some(dir.clone()),
             dump_frame: None,
+            window: false,
         };
         let err = client_auth_for(&args).unwrap_err();
         assert!(
@@ -759,6 +772,7 @@ mod tests {
             host_key: None,
             config_dir: config_dir.clone(),
             dump_frame: None,
+            window: false,
         };
         assert_eq!(client_auth_for(&args).unwrap().host_key, key);
         run_client_admin(&ClientAdmin::TrustRemove {
@@ -844,5 +858,23 @@ mod tests {
             Some(PathBuf::from("/tmp/perigee-test/f.ppm"))
         );
         assert!(parse_cli_args(&s(&["connect", "192.0.2.10", "--dump-frame"]), base).is_err());
+    }
+
+    #[test]
+    fn test_parse_connect_window_flag() {
+        let base = HostOptions::default();
+
+        let with_window =
+            parse_cli_args(&s(&["connect", "192.0.2.10", "--window"]), base.clone()).unwrap();
+        let CliCommand::Connect(args) = with_window else {
+            panic!("expected Connect, got {with_window:?}");
+        };
+        assert!(args.window);
+
+        let without_window = parse_cli_args(&s(&["connect", "192.0.2.10"]), base).unwrap();
+        let CliCommand::Connect(args) = without_window else {
+            panic!("expected Connect, got {without_window:?}");
+        };
+        assert!(!args.window);
     }
 }
