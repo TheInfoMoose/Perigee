@@ -9,11 +9,13 @@
 pub mod audio;
 pub mod bridge;
 pub mod connect;
+pub mod decode;
 pub mod render;
 pub mod session;
 
 pub use audio::*;
 pub use bridge::*;
 pub use connect::*;
+pub use decode::*;
 pub use render::*;
 pub use session::*;

@@ -17,6 +17,7 @@ use perigee_protocol::{
 };
 
 use crate::audio::ClientAudioBuffer;
+use crate::decode::{ClientVideoDecoder, VideoDecoder};
 use crate::render::DecodedFrameSurface;
 
 /// Upper bound on frame IDs listed in one `LossReport`; a larger gap still forces a keyframe.
@@ -254,6 +255,7 @@ impl ClientSessionPipeline {
         };
 
         let process_messages = async {
+            let mut decoder = ClientVideoDecoder::new();
             while let Some(msg) = wire_rx.recv().await {
                 match msg {
                     WireMessage::Handshake(h) => {
@@ -281,7 +283,7 @@ impl ClientSessionPipeline {
                     }
                     WireMessage::Video(frame) => {
                         let frame_idx = frame.frame_id;
-                        let timestamp_us = frame.timestamp_us;
+                        let monitor_id = frame.monitor_id;
                         let payload_len = frame.payload.len() as u64;
 
                         // Detect sequence gaps and emit instant LossReport for IDR keyframe recovery
@@ -311,13 +313,43 @@ impl ClientSessionPipeline {
                         );
 
                         let decode_start = Instant::now();
-                        let decoded_surface = DecodedFrameSurface {
-                            frame_index: frame_idx,
-                            width: frame.width,
-                            height: frame.height,
-                            format: frame.format,
-                            data: frame.payload,
-                            timestamp_us,
+                        let decode_result = if frame.codec == VideoCodec::RawBgra {
+                            decoder.decode(&frame)
+                        } else {
+                            let mut active_decoder = decoder;
+                            match tokio::task::spawn_blocking(move || {
+                                let res = active_decoder.decode(&frame);
+                                (active_decoder, res)
+                            })
+                            .await
+                            {
+                                Ok((returned_decoder, res)) => {
+                                    decoder = returned_decoder;
+                                    res
+                                }
+                                Err(join_err) => {
+                                    decoder = ClientVideoDecoder::new();
+                                    Err(anyhow::anyhow!(
+                                        "video decoder task failed to join: {join_err}"
+                                    ))
+                                }
+                            }
+                        };
+                        let decoded_surface = match decode_result {
+                            Ok(surface) => surface,
+                            Err(e) => {
+                                warn!(
+                                    frame_id = frame_idx,
+                                    error = %e,
+                                    "Failed to decode video frame"
+                                );
+                                let _ = wire_tx_feedback
+                                    .send(WireMessage::Control(ControlMessage::LossReport {
+                                        missing_frames: vec![frame_idx],
+                                    }))
+                                    .await;
+                                continue;
+                            }
                         };
                         let decode_dur = decode_start.elapsed().as_micros() as u32;
 
@@ -342,7 +374,7 @@ impl ClientSessionPipeline {
 
                             let ack = WireMessage::Control(ControlMessage::FrameAck {
                                 frame_id: frame_idx,
-                                monitor_id: frame.monitor_id,
+                                monitor_id,
                                 render_delay_us: render_dur,
                             });
                             let _ = wire_tx_feedback.send(ack).await;
@@ -513,7 +545,7 @@ mod tests {
                 frame_id: 1,
                 monitor_id: 1,
                 timestamp_us: 1000,
-                codec: VideoCodec::AV1,
+                codec: VideoCodec::RawBgra,
                 is_keyframe: true,
                 width: 1920,
                 height: 1080,
@@ -538,7 +570,7 @@ mod tests {
                 frame_id: 3,
                 monitor_id: 1,
                 timestamp_us: 2000,
-                codec: VideoCodec::AV1,
+                codec: VideoCodec::RawBgra,
                 is_keyframe: false,
                 width: 1920,
                 height: 1080,
@@ -670,7 +702,7 @@ mod tests {
             frame_id,
             monitor_id: 1,
             timestamp_us: 1000,
-            codec: VideoCodec::AV1,
+            codec: VideoCodec::RawBgra,
             is_keyframe: frame_id == 1,
             width: 1920,
             height: 1080,
@@ -816,5 +848,88 @@ mod tests {
         }
 
         assert!(client_to_host_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_session_pipeline_handles_corrupt_av1_without_crashing() {
+        let (host_to_client_tx, host_to_client_rx) = mpsc::channel(32);
+        let (client_to_host_tx, mut client_to_host_rx) = mpsc::channel(32);
+
+        let (_pipeline, state_rx, mut video_rx, _input_tx) = ClientSessionPipeline::spawn(
+            SessionConfig::default(),
+            host_to_client_rx,
+            client_to_host_tx,
+        );
+
+        let hello = client_to_host_rx.recv().await.unwrap();
+        assert!(matches!(
+            hello,
+            WireMessage::Handshake(HandshakeMessage::ClientHello { .. })
+        ));
+
+        // Feed a corrupt AV1 payload as frame 1
+        host_to_client_tx
+            .send(WireMessage::Video(VideoFrameMessage {
+                frame_id: 1,
+                monitor_id: 1,
+                timestamp_us: 1000,
+                codec: VideoCodec::AV1,
+                is_keyframe: true,
+                width: 64,
+                height: 64,
+                stride: 64,
+                format: PixelFormat::NV12,
+                payload: vec![0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x11, 0x22, 0x33],
+            }))
+            .await
+            .unwrap();
+
+        let loss_msg = tokio::time::timeout(Duration::from_secs(10), client_to_host_rx.recv())
+            .await
+            .expect("timed out waiting for LossReport after corrupt AV1 frame")
+            .expect("client_to_host_rx closed unexpectedly");
+        assert_eq!(
+            loss_msg,
+            WireMessage::Control(ControlMessage::LossReport {
+                missing_frames: vec![1],
+            })
+        );
+        assert!(
+            !matches!(*state_rx.borrow(), SessionState::Terminated { .. }),
+            "corrupt AV1 frame must not terminate the session"
+        );
+
+        // Follow with a valid RawBgra frame and verify delivery
+        host_to_client_tx
+            .send(WireMessage::Video(VideoFrameMessage {
+                frame_id: 2,
+                monitor_id: 1,
+                timestamp_us: 2000,
+                codec: VideoCodec::RawBgra,
+                is_keyframe: true,
+                width: 4,
+                height: 4,
+                stride: 16,
+                format: PixelFormat::Bgra8,
+                payload: vec![0xCC; 64],
+            }))
+            .await
+            .unwrap();
+
+        let decoded = tokio::time::timeout(Duration::from_secs(5), video_rx.recv())
+            .await
+            .expect("timed out waiting for valid RawBgra frame")
+            .expect("video_rx closed unexpectedly");
+        assert_eq!(decoded.frame_index, 2);
+        assert_eq!(decoded.width, 4);
+        assert_eq!(decoded.height, 4);
+        assert_eq!(decoded.format, PixelFormat::Bgra8);
+        assert_eq!(decoded.data, vec![0xCC; 64]);
+
+        let ack = client_to_host_rx.recv().await.unwrap();
+        assert!(matches!(
+            ack,
+            WireMessage::Control(ControlMessage::FrameAck { frame_id: 2, .. })
+        ));
     }
 }

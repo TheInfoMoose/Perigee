@@ -955,7 +955,7 @@ mod tests {
                     frame_id: 1,
                     monitor_id: 1,
                     timestamp_us: 16_666,
-                    codec: VideoCodec::AV1,
+                    codec: VideoCodec::RawBgra,
                     is_keyframe: true,
                     width: 64,
                     height: 64,
