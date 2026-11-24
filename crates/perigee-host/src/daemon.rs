@@ -374,9 +374,27 @@ impl HostSessionEngine {
 
                 let need_keyframe = force_keyframe.swap(false, Ordering::SeqCst);
 
-                let encode_started = Instant::now();
-                let encoded = encoder.lock().await.encode(&captured_frame, need_keyframe);
-                let encode_time = encode_started.elapsed();
+                let encode_task = {
+                    let encoder = encoder.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let started = Instant::now();
+                        let mut encoder = encoder.blocking_lock();
+                        let encoded = encoder.encode(&captured_frame, need_keyframe);
+                        (encoded, started.elapsed())
+                    })
+                };
+                let (encoded, encode_time) = tokio::select! {
+                    joined = encode_task => match joined {
+                        Ok(result) => result,
+                        Err(join_err) => {
+                            error!(session_id = %session_id, error = %join_err, "Encode thread failed; stopping session");
+                            is_active.store(false, Ordering::SeqCst);
+                            let _ = stop_tx.send(true);
+                            break;
+                        }
+                    },
+                    _ = stop_rx.changed() => break,
+                };
                 match encoded {
                     Ok(video_msg) => {
                         if let Some(sink) = &screen_sink
@@ -1728,6 +1746,78 @@ mod tests {
         release.store(true, Ordering::SeqCst);
         closed.expect("capture loop kept its sender after stop");
         assert!(!session.is_running());
+    }
+
+    struct BlockingEncoder {
+        entered_tx: Option<tokio::sync::oneshot::Sender<()>>,
+        release_rx: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl VideoEncoder for BlockingEncoder {
+        fn encode(
+            &mut self,
+            _frame: &CapturedFrame,
+            _force_keyframe: bool,
+        ) -> Result<perigee_protocol::VideoFrameMessage> {
+            if let Some(tx) = self.entered_tx.take() {
+                let _ = tx.send(());
+            }
+            let _ = self.release_rx.lock().unwrap().recv();
+            anyhow::bail!("blocking encoder released")
+        }
+
+        fn update_bitrate(&mut self, _target_bitrate_kbps: u32) -> Result<()> {
+            Ok(())
+        }
+
+        fn update_framerate(&mut self, _target_fps: u32) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_capture_loop_stops_while_encoder_blocks() {
+        let engine = HostSessionEngine::new(
+            "blocked-encode".to_string(),
+            CaptureBackendType::WaylandPipeWire,
+            EncoderConfig {
+                width: 64,
+                height: 64,
+                target_fps: 200,
+                ..EncoderConfig::default()
+            },
+        )
+        .expect("HostSessionEngine::new should succeed");
+
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        *engine.encoder.lock().await = Box::new(BlockingEncoder {
+            entered_tx: Some(entered_tx),
+            release_rx: std::sync::Mutex::new(release_rx),
+        });
+
+        let (outgoing_tx, _outgoing_rx) = mpsc::channel::<WireMessage>(8);
+        let (video_tx, mut video_rx) = mpsc::channel::<WireMessage>(MAX_OUTBOUND_VIDEO_BACKLOG);
+        engine
+            .run_capture_loop_with_video(outgoing_tx, video_tx)
+            .await
+            .expect("run_capture_loop_with_video should succeed");
+
+        tokio::time::timeout(Duration::from_secs(2), entered_rx)
+            .await
+            .expect("Timed out waiting for encoder.encode() to be entered")
+            .expect("entered_tx dropped before signaling");
+
+        engine.stop();
+
+        let exited = tokio::time::timeout(Duration::from_millis(500), async {
+            while video_rx.recv().await.is_some() {}
+        })
+        .await;
+
+        let _ = release_tx.send(());
+        exited.expect("capture loop did not exit within 500 ms while encoder was blocked");
+        assert!(!engine.is_running());
     }
 
     #[tokio::test]
