@@ -332,7 +332,7 @@ created_at = "2026-11-24T19:30:25Z"
 [[items.tasks]]
 id = "TASK-0141"
 title = "Linux DMA-BUF capture (ExtDmabufCapturer via ext-image-copy-capture-v1 + zwp_linux_dmabuf_v1 + gbm) with SHM fallback and --capture-mode"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-24T19:30:25Z"
 
