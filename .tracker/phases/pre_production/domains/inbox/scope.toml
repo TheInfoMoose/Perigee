@@ -325,7 +325,7 @@ created_at = "2026-11-24T19:30:25Z"
 [[items.tasks]]
 id = "TASK-0140"
 title = "Multi-monitor /dev/uinput pointer mapping: EV_REL relative motion and virtual-desktop output coordinate mapping"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-24T19:30:25Z"
 
