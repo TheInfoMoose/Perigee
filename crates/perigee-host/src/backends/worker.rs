@@ -20,6 +20,7 @@ use perigee_protocol::{
 };
 
 use crate::backends::linux_capture::FrameCapturer;
+use crate::backends::wayland_dmabuf::CaptureMode;
 use crate::seat::{ActiveSession, LoginctlRunner, SystemLoginctl, query_active_session};
 use crate::{CaptureBackendType, CapturedFrame};
 
@@ -57,16 +58,33 @@ impl WorkerCommand {
         })
     }
 
-    /// Builds the worker process for `session`: its uid and gid (when they differ from ours),
-    /// no supplementary groups, no ambient capabilities, a cleared environment with
-    /// `XDG_RUNTIME_DIR` set, stdin piped as the parent's lifeline (nothing is ever written to it;
-    /// closing it tells the worker to exit), and stdout piped for frames.
+    /// Builds the worker process for `session` using [`CaptureMode::Auto`].
     pub fn build(&self, session: &ActiveSession, output: usize) -> Command {
+        self.build_with_mode(session, output, CaptureMode::Auto)
+    }
+
+    /// Builds the worker process for `session` with the given `capture_mode`: its uid and gid
+    /// (when they differ from ours), no supplementary groups, no ambient capabilities, a cleared
+    /// environment with `XDG_RUNTIME_DIR` set, stdin piped as the parent's lifeline (nothing is
+    /// ever written to it; closing it tells the worker to exit), and stdout piped for frames.
+    pub fn build_with_mode(
+        &self,
+        session: &ActiveSession,
+        output: usize,
+        capture_mode: CaptureMode,
+    ) -> Command {
+        let mode_arg = match capture_mode {
+            CaptureMode::Auto => "auto",
+            CaptureMode::Dmabuf => "dmabuf",
+            CaptureMode::Shm => "shm",
+        };
         let mut cmd = Command::new(&self.program);
         cmd.args(&self.prefix_args)
             .arg("capture-worker")
             .arg("--output")
             .arg(output.to_string())
+            .arg("--capture-mode")
+            .arg(mode_arg)
             .env_clear()
             .env("XDG_RUNTIME_DIR", &session.runtime_dir)
             .env("HOME", "/")
@@ -277,6 +295,7 @@ fn should_warn_poll_failure(consecutive_failures: u32) -> bool {
 pub struct WorkerCapturer {
     command: WorkerCommand,
     output: usize,
+    capture_mode: CaptureMode,
     seat: String,
     loginctl: Box<dyn LoginctlRunner + Send + Sync>,
     current: Option<(ActiveSession, Child, BufReader<ChildStdout>)>,
@@ -305,6 +324,7 @@ impl WorkerCapturer {
         Self {
             command,
             output,
+            capture_mode: CaptureMode::Auto,
             seat: "seat0".to_string(),
             loginctl,
             current: None,
@@ -333,6 +353,17 @@ impl WorkerCapturer {
     pub fn with_layout_sink(mut self, sink: LayoutSink) -> Self {
         self.layout_sink = Some(sink);
         self
+    }
+
+    /// Configures the Wayland capture mode passed to `capture-worker --capture-mode`.
+    pub fn with_capture_mode(mut self, capture_mode: CaptureMode) -> Self {
+        self.capture_mode = capture_mode;
+        self
+    }
+
+    /// Returns the configured Wayland capture mode passed to `capture-worker --capture-mode`.
+    pub fn capture_mode(&self) -> CaptureMode {
+        self.capture_mode
     }
 
     /// A handle that stops the current (and any later) worker from another thread.
@@ -384,7 +415,7 @@ impl WorkerCapturer {
             );
             let mut child = self
                 .command
-                .build(&session, self.output)
+                .build_with_mode(&session, self.output, self.capture_mode)
                 .spawn()
                 .context("failed to start the capture worker")?;
             let stdin = child.stdin.take().context("capture worker has no stdin")?;
@@ -612,7 +643,17 @@ mod tests {
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
-        assert_eq!(args, ["host", "capture-worker", "--output", "0"]);
+        assert_eq!(
+            args,
+            [
+                "host",
+                "capture-worker",
+                "--output",
+                "0",
+                "--capture-mode",
+                "auto"
+            ]
+        );
         let envs: Vec<(String, Option<String>)> = cmd
             .get_envs()
             .map(|(key, value)| {
@@ -954,10 +995,48 @@ mod tests {
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
-        assert_eq!(args, ["capture-worker", "--output", "2"]);
+        assert_eq!(
+            args,
+            ["capture-worker", "--output", "2", "--capture-mode", "auto"]
+        );
 
         let worker = WorkerCapturer::new(command, 2);
         assert_eq!(worker.output_index(), 2);
+    }
+
+    #[test]
+    fn test_worker_command_build_with_mode_passes_capture_mode_flag() {
+        let command = WorkerCommand {
+            program: PathBuf::from("/usr/bin/perigee-host"),
+            prefix_args: Vec::new(),
+        };
+        let session = ActiveSession {
+            id: "c1".to_string(),
+            uid: 1000,
+            gid: 1000,
+            user_name: "testuser".to_string(),
+            class: "user".to_string(),
+            session_type: "wayland".to_string(),
+            runtime_dir: PathBuf::from("/run/user/1000"),
+        };
+        let cmd = command.build_with_mode(&session, 1, CaptureMode::Dmabuf);
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "capture-worker",
+                "--output",
+                "1",
+                "--capture-mode",
+                "dmabuf"
+            ]
+        );
+
+        let worker = WorkerCapturer::new(command, 1).with_capture_mode(CaptureMode::Shm);
+        assert_eq!(worker.capture_mode(), CaptureMode::Shm);
     }
 
     #[test]

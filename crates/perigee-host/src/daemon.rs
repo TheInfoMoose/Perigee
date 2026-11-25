@@ -22,7 +22,8 @@ use perigee_protocol::{
 
 use crate::audio::HostAudioCapturer;
 use crate::backends::{
-    FrameCapturer, LinuxCaptureController, MacOsScreenCaptureKitCapturer, WindowsDxgiCapturer,
+    CaptureMode, FrameCapturer, LinuxCaptureController, MacOsScreenCaptureKitCapturer,
+    WindowsDxgiCapturer,
 };
 use crate::encoder::{EncoderConfig, MacOsVideoToolboxEncoder, SoftwareVideoEncoder, VideoEncoder};
 use crate::encoder_gst::GstreamerAv1Encoder;
@@ -132,14 +133,36 @@ impl HostSessionEngine {
     }
 
     /// Creates a [`HostSessionEngine`] whose capture, encoder and input follow `media`, `codec`,
-    /// and `output_index`.
+    /// and `output_index`, using [`CaptureMode::Auto`].
     pub fn with_media_codec_and_output(
+        session_id: String,
+        backend: CaptureBackendType,
+        encoder_config: EncoderConfig,
+        media: MediaMode,
+        codec: HostCodec,
+        output_index: usize,
+    ) -> Result<Self> {
+        Self::with_media_codec_output_and_capture_mode(
+            session_id,
+            backend,
+            encoder_config,
+            media,
+            codec,
+            output_index,
+            CaptureMode::Auto,
+        )
+    }
+
+    /// Creates a [`HostSessionEngine`] whose capture, encoder and input follow `media`, `codec`,
+    /// `output_index`, and `capture_mode`.
+    pub fn with_media_codec_output_and_capture_mode(
         session_id: String,
         backend: CaptureBackendType,
         mut encoder_config: EncoderConfig,
         media: MediaMode,
         codec: HostCodec,
         output_index: usize,
+        capture_mode: CaptureMode,
     ) -> Result<Self> {
         let fps = match (media, codec) {
             (MediaMode::StandIn, _) => encoder_config.target_fps,
@@ -191,9 +214,11 @@ impl HostSessionEngine {
                     Arc::new(NativeInputInjector::new(backend));
                 (capturer, encoder, injector, None, None)
             }
-            MediaMode::Live => Self::build_live_media(encoder_config, codec, output_index)?,
+            MediaMode::Live => {
+                Self::build_live_media(encoder_config, codec, output_index, capture_mode)?
+            }
             MediaMode::FollowSeat => {
-                Self::build_follow_seat_media(encoder_config, codec, output_index)?
+                Self::build_follow_seat_media(encoder_config, codec, output_index, capture_mode)?
             }
         };
         let (stop_tx, _) = watch::channel(false);
@@ -234,26 +259,34 @@ impl HostSessionEngine {
         }
     }
 
-    /// Linux live media: Wayland shared-memory capture of `output_index`, raw or AV1 frames, uinput input.
+    /// Linux live media: Wayland DMA-BUF/SHM capture of `output_index`, raw or AV1 frames, uinput input.
     #[cfg(target_os = "linux")]
     fn build_live_media(
         encoder_config: EncoderConfig,
         codec: HostCodec,
         output_index: usize,
+        capture_mode: CaptureMode,
     ) -> Result<SessionMedia> {
         let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
             .map(std::path::PathBuf::from)
-            .context("live media needs XDG_RUNTIME_DIR for its shared-memory buffer")?;
-        let shm_capturer =
-            crate::backends::WaylandShmCapturer::connect(None, &runtime_dir, output_index)
-                .context("failed to start Wayland capture (is WAYLAND_DISPLAY set?)")?;
-        let cancel = shm_capturer.canceller();
+            .context("live media needs XDG_RUNTIME_DIR for its Wayland capture buffers")?;
+        let wayland_capturer = crate::backends::WaylandCapturer::connect(
+            None,
+            &runtime_dir,
+            output_index,
+            capture_mode,
+        )
+        .context("failed to start Wayland capture (is WAYLAND_DISPLAY set?)")?;
+        let cancel = wayland_capturer.canceller();
         let capture_stop: CaptureStop = Arc::new(move || cancel.cancel());
         let uinput = Arc::new(
-            crate::backends::UinputInjector::new(shm_capturer.width(), shm_capturer.height())
-                .context("failed to create the /dev/uinput devices")?,
+            crate::backends::UinputInjector::new(
+                wayland_capturer.width(),
+                wayland_capturer.height(),
+            )
+            .context("failed to create the /dev/uinput devices")?,
         );
-        if let Ok(monitors) = shm_capturer.enumerate_monitors()
+        if let Ok(monitors) = wayland_capturer.enumerate_monitors()
             && !monitors.is_empty()
         {
             uinput.set_output_layout(monitors, output_index as u32 + 1);
@@ -262,7 +295,7 @@ impl HostSessionEngine {
         let screen_sink: ScreenSink = Arc::new(move |width, height| {
             sink_target.set_screen_size(width, height);
         });
-        let capturer: Box<dyn FrameCapturer> = Box::new(shm_capturer);
+        let capturer: Box<dyn FrameCapturer> = Box::new(wayland_capturer);
         let encoder = Self::build_live_encoder(encoder_config, codec)?;
         let injector: Arc<dyn HostInputInjector> = uinput;
         Ok((
@@ -279,6 +312,7 @@ impl HostSessionEngine {
         _encoder_config: EncoderConfig,
         _codec: HostCodec,
         _output_index: usize,
+        _capture_mode: CaptureMode,
     ) -> Result<SessionMedia> {
         anyhow::bail!("live media is only implemented on Linux")
     }
@@ -289,6 +323,7 @@ impl HostSessionEngine {
         encoder_config: EncoderConfig,
         codec: HostCodec,
         output_index: usize,
+        capture_mode: CaptureMode,
     ) -> Result<SessionMedia> {
         let uinput = Arc::new(
             crate::backends::UinputInjector::new(1920, 1080)
@@ -296,11 +331,11 @@ impl HostSessionEngine {
         );
         let layout_target = uinput.clone();
         let command = crate::backends::WorkerCommand::current()?;
-        let worker = crate::backends::WorkerCapturer::new(command, output_index).with_layout_sink(
-            Arc::new(move |monitors, active_monitor_id| {
+        let worker = crate::backends::WorkerCapturer::new(command, output_index)
+            .with_capture_mode(capture_mode)
+            .with_layout_sink(Arc::new(move |monitors, active_monitor_id| {
                 layout_target.set_output_layout(monitors, active_monitor_id);
-            }),
-        );
+            }));
         let stopper = worker.stopper();
         let capture_stop: CaptureStop = Arc::new(move || stopper.stop());
         let capturer: Box<dyn FrameCapturer> = Box::new(worker);
@@ -324,6 +359,7 @@ impl HostSessionEngine {
         _encoder_config: EncoderConfig,
         _codec: HostCodec,
         _output_index: usize,
+        _capture_mode: CaptureMode,
     ) -> Result<SessionMedia> {
         anyhow::bail!("follow-seat media is only implemented on Linux")
     }
@@ -635,6 +671,9 @@ pub struct PerigeeHostDaemon {
     /// Wayland output index for live/follow-seat sessions; `0` unless configured via
     /// [`Self::with_output_index`].
     output_index: usize,
+    /// Wayland capture mode for live/follow-seat sessions; [`CaptureMode::Auto`] unless
+    /// configured via [`Self::with_capture_mode`].
+    capture_mode: CaptureMode,
 }
 
 impl PerigeeHostDaemon {
@@ -657,6 +696,7 @@ impl PerigeeHostDaemon {
             media: MediaMode::StandIn,
             codec: HostCodec::Raw,
             output_index: 0,
+            capture_mode: CaptureMode::Auto,
         }
     }
 
@@ -675,6 +715,17 @@ impl PerigeeHostDaemon {
     /// Returns the configured Wayland output index.
     pub fn output_index(&self) -> usize {
         self.output_index
+    }
+
+    /// Configures the Wayland capture mode used for newly provisioned live/follow-seat sessions.
+    pub fn with_capture_mode(mut self, capture_mode: CaptureMode) -> Self {
+        self.capture_mode = capture_mode;
+        self
+    }
+
+    /// Returns the configured Wayland capture mode.
+    pub fn capture_mode(&self) -> CaptureMode {
+        self.capture_mode
     }
 
     /// Auto-detects operating system backend (Wayland/COSMIC, X11 fallback, DXGI, or ScreenCaptureKit).
@@ -731,13 +782,14 @@ impl PerigeeHostDaemon {
         session_id: String,
         encoder_config: EncoderConfig,
     ) -> Result<Arc<HostSessionEngine>> {
-        let session = Arc::new(HostSessionEngine::with_media_codec_and_output(
+        let session = Arc::new(HostSessionEngine::with_media_codec_output_and_capture_mode(
             session_id,
             self.backend,
             encoder_config,
             self.media,
             self.codec,
             self.output_index,
+            self.capture_mode,
         )?);
         let mut sessions = self.active_sessions.lock().await;
         sessions.push(session.clone());
@@ -2195,5 +2247,21 @@ mod tests {
         )
         .with_output_index(2);
         assert_eq!(selected_daemon.output_index(), 2);
+    }
+
+    #[test]
+    fn test_daemon_with_capture_mode_stores_selected_mode() {
+        let default_daemon = PerigeeHostDaemon::new(
+            "capture-mode-default".to_string(),
+            CaptureBackendType::WaylandPipeWire,
+        );
+        assert_eq!(default_daemon.capture_mode(), CaptureMode::Auto);
+
+        let selected_daemon = PerigeeHostDaemon::new(
+            "capture-mode-selected".to_string(),
+            CaptureBackendType::WaylandPipeWire,
+        )
+        .with_capture_mode(CaptureMode::Dmabuf);
+        assert_eq!(selected_daemon.capture_mode(), CaptureMode::Dmabuf);
     }
 }

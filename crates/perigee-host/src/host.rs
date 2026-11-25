@@ -65,8 +65,8 @@ Options:
   --codec <CODEC>       raw (default; uncompressed frames) or av1 (GStreamer AV1 encoder,
                         VA-API preferred with software fallback, 30 fps)
   --output <INDEX>      Wayland output index to capture for live/follow-seat (default: 0)
-  --capture-mode <MODE> Wayland capture backend for snapshot/capture-worker: auto (default;
-                        DMA-BUF with automatic wl_shm fallback), dmabuf, or shm
+  --capture-mode <MODE> Wayland capture backend for live/follow-seat/snapshot/capture-worker:
+                        auto (default; DMA-BUF with automatic wl_shm fallback), dmabuf, or shm
   -h, --help            Print this help text and exit
   -V, --version         Print version information and exit
 
@@ -76,6 +76,7 @@ Environment variables (overridden by CLI flags):
   PERIGEE_CONFIG_DIR      Config directory (identity.key, trusted_clients)
   PERIGEE_CODEC           Video codec: raw (default) or av1
   PERIGEE_OUTPUT          Wayland output index to capture (default: 0)
+  PERIGEE_CAPTURE_MODE    Wayland capture backend: auto (default), dmabuf, or shm
   PERIGEE_SMOKE_TEST      If set, exit cleanly right after binding the QUIC listener
 
 Only clients whose node key is listed in trusted_clients can connect.";
@@ -95,6 +96,9 @@ pub struct HostOptions {
     pub codec: HostCodec,
     /// Wayland output index to capture (`--output`, `PERIGEE_OUTPUT`); `0` by default.
     pub output_index: usize,
+    /// Wayland capture backend (`--capture-mode`, `PERIGEE_CAPTURE_MODE`); [`CaptureMode::Auto`]
+    /// by default.
+    pub capture_mode: CaptureMode,
 }
 
 impl Default for HostOptions {
@@ -109,6 +113,7 @@ impl Default for HostOptions {
             media: MediaMode::StandIn,
             codec: HostCodec::Raw,
             output_index: 0,
+            capture_mode: CaptureMode::Auto,
         }
     }
 }
@@ -123,7 +128,8 @@ fn parse_codec(value: &str) -> Result<HostCodec> {
 
 impl HostOptions {
     /// Builds [`HostOptions`] starting from [`HostOptions::default`] and applying
-    /// `PERIGEE_BIND_ADDR`, `PERIGEE_BIND_INTERFACE`, `PERIGEE_CODEC`, and `PERIGEE_OUTPUT` from `get`.
+    /// `PERIGEE_BIND_ADDR`, `PERIGEE_BIND_INTERFACE`, `PERIGEE_CODEC`, `PERIGEE_OUTPUT`,
+    /// and `PERIGEE_CAPTURE_MODE` from `get`.
     pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let mut opts = Self::default();
         if let Some(raw_addr) = get("PERIGEE_BIND_ADDR") {
@@ -148,6 +154,12 @@ impl HostOptions {
             opts.output_index = raw_output
                 .parse()
                 .with_context(|| format!("invalid PERIGEE_OUTPUT '{raw_output}'"))?;
+        }
+        if let Some(raw_capture_mode) = get("PERIGEE_CAPTURE_MODE")
+            && !raw_capture_mode.is_empty()
+        {
+            opts.capture_mode = parse_capture_mode(&raw_capture_mode)
+                .with_context(|| format!("invalid PERIGEE_CAPTURE_MODE '{raw_capture_mode}'"))?;
         }
         Ok(opts)
     }
@@ -331,6 +343,14 @@ pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand
                 opts.output_index = val.parse().with_context(|| {
                     format!("invalid --output '{val}': expected an output index")
                 })?;
+                i += 2;
+            }
+            "--capture-mode" => {
+                let val = slice
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow!("--capture-mode needs a value: auto, dmabuf, or shm"))?;
+                opts.capture_mode = parse_capture_mode(val)
+                    .with_context(|| format!("invalid --capture-mode '{val}'"))?;
                 i += 2;
             }
             other => bail!("unknown argument '{other}'; run with --help"),
@@ -816,7 +836,8 @@ pub fn bind_host(options: &HostOptions) -> Result<(Arc<PerigeeHostDaemon>, QuicS
     let backend = PerigeeHostDaemon::auto_detect_backend();
     let mut daemon = PerigeeHostDaemon::new(options.node_name.clone(), backend)
         .with_codec(options.codec)
-        .with_output_index(options.output_index);
+        .with_output_index(options.output_index)
+        .with_capture_mode(options.capture_mode);
     daemon.media = options.media;
     let daemon = Arc::new(daemon);
     let listener = QuicServerListener::bind_mtls(
@@ -1115,6 +1136,7 @@ mod tests {
                 media: MediaMode::StandIn,
                 codec: HostCodec::Raw,
                 output_index: 0,
+                capture_mode: CaptureMode::Auto,
             })
         );
 
@@ -1538,6 +1560,46 @@ mod tests {
         assert!(
             format!("{invalid_err:#}").contains("--output"),
             "Expected error naming --output, got: {invalid_err:#}"
+        );
+    }
+
+    #[test]
+    fn test_host_options_capture_mode_from_env_and_args() {
+        let s = |items: &[&str]| items.iter().map(|v| (*v).to_string()).collect::<Vec<_>>();
+
+        assert_eq!(HostOptions::default().capture_mode, CaptureMode::Auto);
+
+        let env_dmabuf = |k: &str| (k == "PERIGEE_CAPTURE_MODE").then(|| "dmabuf".to_string());
+        let from_env = HostOptions::from_env_with(env_dmabuf).unwrap();
+        assert_eq!(from_env.capture_mode, CaptureMode::Dmabuf);
+
+        let bad_env = |k: &str| (k == "PERIGEE_CAPTURE_MODE").then(|| "vulkan".to_string());
+        let err = HostOptions::from_env_with(bad_env).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("PERIGEE_CAPTURE_MODE"),
+            "Expected error naming PERIGEE_CAPTURE_MODE, got: {err:#}"
+        );
+
+        assert_eq!(
+            resolve_host_command(&s(&["--capture-mode", "shm"]), env_dmabuf).unwrap(),
+            HostCommand::Run(HostOptions {
+                capture_mode: CaptureMode::Shm,
+                ..HostOptions::default()
+            })
+        );
+
+        let missing_err =
+            parse_host_args(&s(&["--capture-mode"]), HostOptions::default()).unwrap_err();
+        assert!(
+            format!("{missing_err:#}").contains("--capture-mode"),
+            "Expected error naming --capture-mode, got: {missing_err:#}"
+        );
+
+        let invalid_err =
+            parse_host_args(&s(&["--capture-mode", "vulkan"]), HostOptions::default()).unwrap_err();
+        assert!(
+            format!("{invalid_err:#}").contains("--capture-mode"),
+            "Expected error naming --capture-mode, got: {invalid_err:#}"
         );
     }
 
