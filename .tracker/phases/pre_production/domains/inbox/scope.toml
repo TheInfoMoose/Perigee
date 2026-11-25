@@ -374,7 +374,7 @@ created_at = "2026-11-25T01:53:04Z"
 [[items.tasks]]
 id = "TASK-0147"
 title = "Separate UinputInjector encoded frame dimensions from multi-monitor compositor geometry and eliminate set_output_layout double-lock/race (BUG-0042, BUG-0043)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-25T03:35:28Z"
 
