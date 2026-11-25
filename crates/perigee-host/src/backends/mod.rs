@@ -1,5 +1,7 @@
 //! Operating system display capture and input injection backends.
 
+#[cfg(target_os = "linux")]
+pub mod broker;
 pub mod linux_capture;
 pub mod linux_input;
 pub mod macos;
@@ -12,6 +14,13 @@ pub mod windows;
 #[cfg(target_os = "linux")]
 pub mod worker;
 
+#[cfg(target_os = "linux")]
+pub use broker::{
+    BrokerSpawnRequest, BrokerSpawnedWorker, CaptureBroker, DEFAULT_BROKER_SOCKET_PATH,
+    MAX_BROKER_CONCURRENT_WORKERS, format_spawn_request, parse_spawn_request,
+    recv_response_with_fds, request_broker_worker, send_response_with_fds,
+    validate_non_root_session,
+};
 pub use linux_capture::{
     DRM_FORMAT_ABGR8888, DRM_FORMAT_ARGB8888, DRM_FORMAT_NV12, DRM_FORMAT_XBGR8888,
     DRM_FORMAT_XRGB8888, DmaBufPlaneDescriptor, FrameCapturer, GbmDmabufSurface,

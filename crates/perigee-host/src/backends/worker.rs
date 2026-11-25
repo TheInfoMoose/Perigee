@@ -245,7 +245,7 @@ fn kill_and_reap_child(session: &ActiveSession, child: &mut Child) {
 /// has not exited by then (or polling its status fails), falls back to `kill()` + `wait()` to
 /// terminate and reap it. Blocking `wait()` is skipped if `kill()` fails with an error other
 /// than `InvalidInput` (for example `PermissionDenied`), avoiding an indefinite hang.
-fn wait_for_worker_exit(session: &ActiveSession, mut child: Child) {
+pub(crate) fn wait_for_worker_exit(session: &ActiveSession, mut child: Child) {
     let deadline = Instant::now() + WORKER_EXIT_TIMEOUT;
     loop {
         match child.try_wait() {
