@@ -259,19 +259,64 @@ struct OutputLayout {
     active_monitor_id: u32,
 }
 
-impl OutputLayout {
-    fn update_active_size(&mut self, width: u32, height: u32) {
-        let width = width.max(1);
-        let height = height.max(1);
-        if let Some(active) = self
-            .monitors
-            .iter_mut()
-            .find(|m| m.monitor_id == self.active_monitor_id)
-        {
-            active.width = width;
-            active.height = height;
-        }
+fn apply_output_layout(
+    layout: &mut OutputLayout,
+    screen_width: &AtomicU32,
+    screen_height: &AtomicU32,
+    monitors: Vec<MonitorInfo>,
+    active_monitor_id: u32,
+) {
+    layout.monitors = monitors;
+    layout.active_monitor_id = active_monitor_id;
+    if let Some(active) = layout
+        .monitors
+        .iter()
+        .find(|m| m.monitor_id == active_monitor_id)
+        .filter(|m| m.width > 0 && m.height > 0)
+    {
+        screen_width.store(active.width, Ordering::Relaxed);
+        screen_height.store(active.height, Ordering::Relaxed);
     }
+}
+
+fn resolve_multimonitor_abs(
+    layout: &OutputLayout,
+    monitor_id: u32,
+    x: f64,
+    y: f64,
+    frame_width: u32,
+    frame_height: u32,
+) -> Result<Option<(i32, i32)>> {
+    if layout.monitors.len() <= 1 {
+        return Ok(None);
+    }
+    if !x.is_finite() || !y.is_finite() {
+        bail!("non-finite pointer coordinates: ({x}, {y})");
+    }
+    let target = layout
+        .monitors
+        .iter()
+        .find(|m| m.monitor_id == monitor_id)
+        .or_else(|| {
+            layout
+                .monitors
+                .iter()
+                .find(|m| m.monitor_id == layout.active_monitor_id)
+        })
+        .unwrap_or(&layout.monitors[0]);
+    let (norm_x, norm_y) = if (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y) {
+        (x, y)
+    } else {
+        let coords =
+            normalize_pointer_coordinates(x, y, true, frame_width.max(1), frame_height.max(1))?;
+        (coords.norm_x, coords.norm_y)
+    };
+    Ok(Some(map_output_pointer_to_abs(
+        norm_x,
+        norm_y,
+        target,
+        &layout.monitors,
+    )?))
 }
 
 /// Real [`HostInputInjector`] backed by two `/dev/uinput` virtual devices.
@@ -324,36 +369,27 @@ impl UinputInjector {
         })
     }
 
-    /// Updates the size that pixel-space pointer coordinates are scaled against (the size of
-    /// the frames the client sees) and keeps the active monitor entry in `output_layout` in sync.
+    /// Updates the encoded frame pixel dimensions that pixel-space pointer coordinates are
+    /// scaled against, without mutating `output_layout`.
     pub fn set_screen_size(&self, width: u32, height: u32) {
-        let width = width.max(1);
-        let height = height.max(1);
-        self.screen_width.store(width, Ordering::Relaxed);
-        self.screen_height.store(height, Ordering::Relaxed);
-        let mut layout = self
-            .output_layout
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        layout.update_active_size(width, height);
+        self.screen_width.store(width.max(1), Ordering::Relaxed);
+        self.screen_height.store(height.max(1), Ordering::Relaxed);
     }
 
     /// Stores the live multi-monitor layout and updates `screen_width`/`screen_height` from
-    /// the active monitor when present.
+    /// the active monitor when present, atomically under a single `output_layout` lock.
     pub fn set_output_layout(&self, monitors: Vec<MonitorInfo>, active_monitor_id: u32) {
-        if let Some(active) = monitors
-            .iter()
-            .find(|m| m.monitor_id == active_monitor_id)
-            .filter(|m| m.width > 0 && m.height > 0)
-        {
-            self.set_screen_size(active.width, active.height);
-        }
         let mut layout = self
             .output_layout
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        layout.monitors = monitors;
-        layout.active_monitor_id = active_monitor_id;
+        apply_output_layout(
+            &mut layout,
+            &self.screen_width,
+            &self.screen_height,
+            monitors,
+            active_monitor_id,
+        );
     }
 
     fn move_to(&self, x: f64, y: f64, is_absolute: bool) -> Result<()> {
@@ -403,22 +439,16 @@ impl HostInputInjector for UinputInjector {
                         .output_layout
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner());
-                    if layout.monitors.len() > 1 {
-                        let target = layout
-                            .monitors
-                            .iter()
-                            .find(|m| m.monitor_id == *monitor_id)
-                            .or_else(|| {
-                                layout
-                                    .monitors
-                                    .iter()
-                                    .find(|m| m.monitor_id == layout.active_monitor_id)
-                            })
-                            .unwrap_or(&layout.monitors[0]);
-                        Some(map_output_pointer_to_abs(*x, *y, target, &layout.monitors)?)
-                    } else {
-                        None
-                    }
+                    let frame_width = self.screen_width.load(Ordering::Relaxed);
+                    let frame_height = self.screen_height.load(Ordering::Relaxed);
+                    resolve_multimonitor_abs(
+                        &layout,
+                        *monitor_id,
+                        *x,
+                        *y,
+                        frame_width,
+                        frame_height,
+                    )?
                 };
 
                 if let Some((abs_x, abs_y)) = mapped_abs {
@@ -629,30 +659,93 @@ mod tests {
     }
 
     #[test]
-    fn test_output_layout_update_active_size_syncs_active_monitor() {
-        let mut mon1 = make_monitor(1, 0, 0, 1920, 1080);
-        mon1.scale_factor = 2.0;
-        let mut mon2 = make_monitor(2, 1920, 0, 1920, 1080);
-        mon2.scale_factor = 1.5;
+    fn test_multimonitor_mapping_survives_decimated_frame_size() {
+        let mut hidpi_primary = make_monitor(1, 0, 0, 3840, 2160);
+        hidpi_primary.scale_factor = 2.0;
+        let secondary = make_monitor(2, 1920, 0, 1920, 1080);
 
-        let mut layout = OutputLayout {
-            monitors: vec![mon1.clone(), mon2],
-            active_monitor_id: 2,
+        let layout = OutputLayout {
+            monitors: vec![hidpi_primary, secondary],
+            active_monitor_id: 1,
         };
 
-        layout.update_active_size(2560, 1440);
-        assert_eq!(layout.monitors[0].width, mon1.width);
-        assert_eq!(layout.monitors[0].height, mon1.height);
-        assert_eq!(layout.monitors[1].width, 2560);
-        assert_eq!(layout.monitors[1].height, 1440);
-        assert_eq!(layout.monitors[1].x, 1920);
-        assert_eq!(layout.monitors[1].y, 0);
-        assert_eq!(layout.monitors[1].scale_factor, 1.5);
+        assert_eq!(
+            compute_virtual_desktop_bounds(&layout.monitors),
+            Some((0, 0, 3840, 1080))
+        );
 
-        layout.update_active_size(0, 0);
-        assert_eq!(layout.monitors[0].width, mon1.width);
-        assert_eq!(layout.monitors[0].height, mon1.height);
-        assert_eq!(layout.monitors[1].width, 1);
-        assert_eq!(layout.monitors[1].height, 1);
+        let (norm_x, norm_y) = resolve_multimonitor_abs(&layout, 1, 1.0, 1.0, 1280, 720)
+            .unwrap()
+            .expect("multi-monitor layout must resolve");
+        assert!(
+            (norm_x - UINPUT_ABS_MAX / 2).abs() <= 1,
+            "unexpected norm_x={norm_x}"
+        );
+        assert_eq!(norm_y, UINPUT_ABS_MAX);
+
+        let (pix_x, pix_y) = resolve_multimonitor_abs(&layout, 1, 1280.0, 720.0, 1280, 720)
+            .unwrap()
+            .expect("multi-monitor layout must resolve");
+        assert!(
+            (pix_x - UINPUT_ABS_MAX / 2).abs() <= 1,
+            "unexpected pix_x={pix_x}"
+        );
+        assert_eq!(pix_y, UINPUT_ABS_MAX);
+        assert_eq!((pix_x, pix_y), (norm_x, norm_y));
+
+        let (mon2_x, mon2_y) = resolve_multimonitor_abs(&layout, 2, 1.0, 1.0, 1280, 720)
+            .unwrap()
+            .expect("multi-monitor layout must resolve");
+        assert_eq!((mon2_x, mon2_y), (UINPUT_ABS_MAX, UINPUT_ABS_MAX));
+
+        assert_eq!(
+            compute_virtual_desktop_bounds(&layout.monitors),
+            Some((0, 0, 3840, 1080))
+        );
+    }
+
+    #[test]
+    fn test_output_layout_apply_updates_monitors_and_screen_dimensions_atomically() {
+        let mut layout = OutputLayout::default();
+        let screen_width = AtomicU32::new(1920);
+        let screen_height = AtomicU32::new(1080);
+
+        let monitors = vec![
+            make_monitor(1, 0, 0, 1920, 1080),
+            make_monitor(2, 1920, 0, 2560, 1440),
+        ];
+        apply_output_layout(&mut layout, &screen_width, &screen_height, monitors, 2);
+
+        assert_eq!(layout.monitors.len(), 2);
+        assert_eq!(layout.active_monitor_id, 2);
+        assert_eq!(screen_width.load(Ordering::Relaxed), 2560);
+        assert_eq!(screen_height.load(Ordering::Relaxed), 1440);
+
+        // Absent active monitor ID: layout updates, screen dimensions retain previous values.
+        let monitors_absent = vec![
+            make_monitor(1, 0, 0, 1920, 1080),
+            make_monitor(2, 1920, 0, 3840, 2160),
+        ];
+        apply_output_layout(
+            &mut layout,
+            &screen_width,
+            &screen_height,
+            monitors_absent,
+            99,
+        );
+        assert_eq!(layout.active_monitor_id, 99);
+        assert_eq!(layout.monitors[1].width, 3840);
+        assert_eq!(screen_width.load(Ordering::Relaxed), 2560);
+        assert_eq!(screen_height.load(Ordering::Relaxed), 1440);
+
+        // Zero-sized active monitor: layout updates, screen dimensions retain previous values.
+        let monitors_zero = vec![
+            make_monitor(1, 0, 0, 0, 1080),
+            make_monitor(2, 1920, 0, 1920, 0),
+        ];
+        apply_output_layout(&mut layout, &screen_width, &screen_height, monitors_zero, 2);
+        assert_eq!(layout.active_monitor_id, 2);
+        assert_eq!(screen_width.load(Ordering::Relaxed), 2560);
+        assert_eq!(screen_height.load(Ordering::Relaxed), 1440);
     }
 }
