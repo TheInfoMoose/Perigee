@@ -134,8 +134,28 @@ impl Drop for VirtualDevice {
     }
 }
 
-/// Computes the union bounding box `(min_x, min_y, total_width, total_height)` across all
-/// monitors with `width > 0 && height > 0`. Returns `None` if no valid monitors exist.
+/// Converts a monitor's physical pixel dimensions into logical desktop dimensions using
+/// `monitor.scale_factor`.
+///
+/// Returns `(0, 0)` when either physical dimension is zero. Non-finite or non-positive scale
+/// factors fall back to `1.0`.
+pub fn logical_monitor_size(monitor: &MonitorInfo) -> (u32, u32) {
+    if monitor.width == 0 || monitor.height == 0 {
+        return (0, 0);
+    }
+    let scale = if monitor.scale_factor.is_finite() && monitor.scale_factor > 0.0 {
+        f64::from(monitor.scale_factor)
+    } else {
+        1.0
+    };
+    let logical_w = (f64::from(monitor.width) / scale).round().max(1.0) as u32;
+    let logical_h = (f64::from(monitor.height) / scale).round().max(1.0) as u32;
+    (logical_w, logical_h)
+}
+
+/// Computes the union bounding box `(min_x, min_y, total_width, total_height)` in logical
+/// desktop space across all monitors with `width > 0 && height > 0`. Returns `None` if no valid
+/// monitors exist.
 pub fn compute_virtual_desktop_bounds(monitors: &[MonitorInfo]) -> Option<(i32, i32, u32, u32)> {
     let mut min_x = i64::MAX;
     let mut min_y = i64::MAX;
@@ -144,13 +164,14 @@ pub fn compute_virtual_desktop_bounds(monitors: &[MonitorInfo]) -> Option<(i32, 
     let mut found = false;
 
     for monitor in monitors {
-        if monitor.width == 0 || monitor.height == 0 {
+        let (logical_w, logical_h) = logical_monitor_size(monitor);
+        if logical_w == 0 || logical_h == 0 {
             continue;
         }
         let x0 = i64::from(monitor.x);
         let y0 = i64::from(monitor.y);
-        let x1 = x0 + i64::from(monitor.width);
-        let y1 = y0 + i64::from(monitor.height);
+        let x1 = x0 + i64::from(logical_w);
+        let y1 = y0 + i64::from(logical_h);
         min_x = min_x.min(x0);
         min_y = min_y.min(y0);
         max_x = max_x.max(x1);
@@ -173,11 +194,11 @@ pub fn compute_virtual_desktop_bounds(monitors: &[MonitorInfo]) -> Option<(i32, 
 }
 
 /// Maps output-local pointer coordinates `(x, y)` on `target` into `0..=UINPUT_ABS_MAX`
-/// across the union bounding box of `monitors`.
+/// across the logical union bounding box of `monitors`.
 ///
 /// Coordinates in `0.0..=1.0` are treated as normalized output-local coordinates; otherwise
-/// they are treated as pixel coordinates within `target.width x target.height` and clamped
-/// to `[0.0, 1.0]`.
+/// they are treated as physical pixel coordinates within `target.width x target.height` and
+/// clamped to `[0.0, 1.0]`.
 pub fn map_output_pointer_to_abs(
     x: f64,
     y: f64,
@@ -208,8 +229,9 @@ pub fn map_output_pointer_to_abs(
         )
     };
 
-    let global_x = f64::from(target.x) + norm_x * f64::from(target.width);
-    let global_y = f64::from(target.y) + norm_y * f64::from(target.height);
+    let (logical_w, logical_h) = logical_monitor_size(target);
+    let global_x = f64::from(target.x) + norm_x * f64::from(logical_w);
+    let global_y = f64::from(target.y) + norm_y * f64::from(logical_h);
     let desktop_norm_x = ((global_x - f64::from(min_x)) / f64::from(total_width)).clamp(0.0, 1.0);
     let desktop_norm_y = ((global_y - f64::from(min_y)) / f64::from(total_height)).clamp(0.0, 1.0);
 
@@ -235,6 +257,21 @@ pub fn map_relative_pointer_delta(dx: f64, dy: f64) -> Result<(i32, i32)> {
 struct OutputLayout {
     monitors: Vec<MonitorInfo>,
     active_monitor_id: u32,
+}
+
+impl OutputLayout {
+    fn update_active_size(&mut self, width: u32, height: u32) {
+        let width = width.max(1);
+        let height = height.max(1);
+        if let Some(active) = self
+            .monitors
+            .iter_mut()
+            .find(|m| m.monitor_id == self.active_monitor_id)
+        {
+            active.width = width;
+            active.height = height;
+        }
+    }
 }
 
 /// Real [`HostInputInjector`] backed by two `/dev/uinput` virtual devices.
@@ -288,10 +325,17 @@ impl UinputInjector {
     }
 
     /// Updates the size that pixel-space pointer coordinates are scaled against (the size of
-    /// the frames the client sees).
+    /// the frames the client sees) and keeps the active monitor entry in `output_layout` in sync.
     pub fn set_screen_size(&self, width: u32, height: u32) {
-        self.screen_width.store(width.max(1), Ordering::Relaxed);
-        self.screen_height.store(height.max(1), Ordering::Relaxed);
+        let width = width.max(1);
+        let height = height.max(1);
+        self.screen_width.store(width, Ordering::Relaxed);
+        self.screen_height.store(height, Ordering::Relaxed);
+        let mut layout = self
+            .output_layout
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        layout.update_active_size(width, height);
     }
 
     /// Stores the live multi-monitor layout and updates `screen_width`/`screen_height` from
@@ -535,5 +579,80 @@ mod tests {
         assert_eq!(map_relative_pointer_delta(0.0, 0.0).unwrap(), (0, 0));
         assert!(map_relative_pointer_delta(f64::INFINITY, 0.0).is_err());
         assert!(map_relative_pointer_delta(0.0, f64::NAN).is_err());
+    }
+
+    #[test]
+    fn test_hidpi_virtual_desktop_bounds_and_pointer_mapping() {
+        let mut hidpi_primary = make_monitor(1, 0, 0, 3840, 2160);
+        hidpi_primary.scale_factor = 2.0;
+        let secondary = make_monitor(2, 1920, 0, 1920, 1080);
+        let monitors = vec![hidpi_primary, secondary];
+
+        assert_eq!(
+            compute_virtual_desktop_bounds(&monitors),
+            Some((0, 0, 3840, 1080))
+        );
+
+        // Center of 2x-scaled monitor 1 via normalized coordinates.
+        let (x1, y1) = map_output_pointer_to_abs(0.5, 0.5, &monitors[0], &monitors).unwrap();
+        assert!((x1 - 16_384).abs() <= 1, "unexpected x1={x1}");
+        assert!((y1 - 32_768).abs() <= 1, "unexpected y1={y1}");
+
+        // Center of 2x-scaled monitor 1 via physical pixel coordinates.
+        let (px1, py1) =
+            map_output_pointer_to_abs(1920.0, 1080.0, &monitors[0], &monitors).unwrap();
+        assert!((px1 - 16_384).abs() <= 1, "unexpected px1={px1}");
+        assert!((py1 - 32_768).abs() <= 1, "unexpected py1={py1}");
+
+        // Center of 1x monitor 2.
+        let (x2, y2) = map_output_pointer_to_abs(0.5, 0.5, &monitors[1], &monitors).unwrap();
+        assert!((x2 - 49_151).abs() <= 1, "unexpected x2={x2}");
+        assert!((y2 - 32_768).abs() <= 1, "unexpected y2={y2}");
+
+        // Fractional 1.5x scale (2880x1620 -> logical 1920x1080).
+        let mut fractional = make_monitor(1, 0, 0, 2880, 1620);
+        fractional.scale_factor = 1.5;
+        assert_eq!(logical_monitor_size(&fractional), (1920, 1080));
+        assert_eq!(
+            compute_virtual_desktop_bounds(&[fractional]),
+            Some((0, 0, 1920, 1080))
+        );
+
+        // Invalid scale factors fall back to 1.0.
+        let mut zero_scale = make_monitor(1, 0, 0, 1920, 1080);
+        zero_scale.scale_factor = 0.0;
+        assert_eq!(logical_monitor_size(&zero_scale), (1920, 1080));
+
+        let mut nan_scale = make_monitor(1, 0, 0, 1920, 1080);
+        nan_scale.scale_factor = f32::NAN;
+        assert_eq!(logical_monitor_size(&nan_scale), (1920, 1080));
+    }
+
+    #[test]
+    fn test_output_layout_update_active_size_syncs_active_monitor() {
+        let mut mon1 = make_monitor(1, 0, 0, 1920, 1080);
+        mon1.scale_factor = 2.0;
+        let mut mon2 = make_monitor(2, 1920, 0, 1920, 1080);
+        mon2.scale_factor = 1.5;
+
+        let mut layout = OutputLayout {
+            monitors: vec![mon1.clone(), mon2],
+            active_monitor_id: 2,
+        };
+
+        layout.update_active_size(2560, 1440);
+        assert_eq!(layout.monitors[0].width, mon1.width);
+        assert_eq!(layout.monitors[0].height, mon1.height);
+        assert_eq!(layout.monitors[1].width, 2560);
+        assert_eq!(layout.monitors[1].height, 1440);
+        assert_eq!(layout.monitors[1].x, 1920);
+        assert_eq!(layout.monitors[1].y, 0);
+        assert_eq!(layout.monitors[1].scale_factor, 1.5);
+
+        layout.update_active_size(0, 0);
+        assert_eq!(layout.monitors[0].width, mon1.width);
+        assert_eq!(layout.monitors[0].height, mon1.height);
+        assert_eq!(layout.monitors[1].width, 1);
+        assert_eq!(layout.monitors[1].height, 1);
     }
 }
