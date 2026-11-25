@@ -360,7 +360,7 @@ created_at = "2026-11-25T01:53:04Z"
 [[items.tasks]]
 id = "TASK-0145"
 title = "Forward Wayland DisplayLayout from capture-worker through WorkerCapturer into UinputInjector::set_output_layout (BUG-0041)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-25T01:53:04Z"
 
