@@ -68,6 +68,20 @@ status = "pending"
 severity = "low"
 created_at = "2026-11-22T14:54:49Z"
 
+[[items.bugs]]
+id = "BUG-0044"
+title = "perigee-capture-broker.socket DirectoryMode=0750 blocks perigee user with EACCES"
+status = "pending"
+severity = "high"
+created_at = "2026-11-25T04:31:04Z"
+
+[[items.bugs]]
+id = "BUG-0046"
+title = "perigee-host.service RestrictAddressFamilies omits AF_NETLINK needed by get_if_addrs fallback"
+status = "pending"
+severity = "low"
+created_at = "2026-11-25T04:31:20Z"
+
 [[items.tasks]]
 id = "TASK-0027"
 title = "Host loop + signals. POST_GATE exit 0 incl. smoke test. Diff matches MUTATION_SPEC 1–6: biased select on shutdown vs accept; shutdown_all_sessions → endpoint close → 2 s wait_idle; SIGINT/SIGTERM; default 127.0.0.1:4433; RFERRAM_BIND_INTERFACE; both service files drop 0.0.0.0; both tests assert what the spec asks"

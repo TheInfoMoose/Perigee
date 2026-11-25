@@ -90,5 +90,5 @@ type = "rust_crate"
 path = "domains/perigee_cli"
 
 [summary]
-total_items = 196
-completed_items = 169
+total_items = 200
+completed_items = 171

@@ -169,16 +169,23 @@ created_at = "2026-11-25T01:25:52Z"
 [[items.bugs]]
 id = "BUG-0042"
 title = "UinputInjector::set_screen_size corrupts multi-monitor output_layout geometry on decimated frames"
-status = "pending"
+status = "closed"
 severity = "high"
 created_at = "2026-11-25T03:07:08Z"
 
 [[items.bugs]]
 id = "BUG-0043"
 title = "UinputInjector::set_output_layout double-locks output_layout and leaves a race window with screen_width/screen_height"
-status = "pending"
+status = "closed"
 severity = "low"
 created_at = "2026-11-25T03:09:10Z"
+
+[[items.bugs]]
+id = "BUG-0045"
+title = "CaptureBroker::bind_broker_listener leaks systemd-activated FD 3 without FD_CLOEXEC to capture-worker"
+status = "pending"
+severity = "high"
+created_at = "2026-11-25T04:31:17Z"
 
 [[items.features]]
 id = "FEAT-0002"
@@ -389,3 +396,10 @@ title = "Allow crates/perigee-host/src/daemon.rs fix for StandIn+Av1 frame size 
 status = "pending"
 severity = "high"
 created_at = "2026-11-24T05:02:45Z"
+
+[[items.tasks]]
+id = "TASK-0151"
+title = "Add unit tests for CaptureBroker concurrency limit and systemd socket-activation FD adoption"
+status = "pending"
+severity = "low"
+created_at = "2026-11-25T04:35:43Z"
