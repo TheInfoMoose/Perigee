@@ -38,6 +38,7 @@ Usage: perigee-host [run] [OPTIONS]
        perigee-host input-test
        perigee-host outputs
        perigee-host headless-check
+       perigee-host capture-broker [--socket <PATH>]
 
 Key management:
   identity              Print this host's node key (created on first use)
@@ -67,6 +68,9 @@ Options:
   --output <INDEX>      Wayland output index to capture for live/follow-seat (default: 0)
   --capture-mode <MODE> Wayland capture backend for live/follow-seat/snapshot/capture-worker:
                         auto (default; DMA-BUF with automatic wl_shm fallback), dmabuf, or shm
+  --broker-socket <PATH>
+                        Unix socket path for capture-broker (follow-seat delegates worker
+                        spawning/reaping to the broker instead of spawning directly)
   -h, --help            Print this help text and exit
   -V, --version         Print version information and exit
 
@@ -77,6 +81,7 @@ Environment variables (overridden by CLI flags):
   PERIGEE_CODEC           Video codec: raw (default) or av1
   PERIGEE_OUTPUT          Wayland output index to capture (default: 0)
   PERIGEE_CAPTURE_MODE    Wayland capture backend: auto (default), dmabuf, or shm
+  PERIGEE_BROKER_SOCKET   Unix socket path for capture-broker (follow-seat mode)
   PERIGEE_SMOKE_TEST      If set, exit cleanly right after binding the QUIC listener
 
 Only clients whose node key is listed in trusted_clients can connect.";
@@ -99,6 +104,9 @@ pub struct HostOptions {
     /// Wayland capture backend (`--capture-mode`, `PERIGEE_CAPTURE_MODE`); [`CaptureMode::Auto`]
     /// by default.
     pub capture_mode: CaptureMode,
+    /// Optional `capture-broker` Unix socket path (`--broker-socket`, `PERIGEE_BROKER_SOCKET`);
+    /// `None` by default.
+    pub broker_socket: Option<PathBuf>,
 }
 
 impl Default for HostOptions {
@@ -114,6 +122,7 @@ impl Default for HostOptions {
             codec: HostCodec::Raw,
             output_index: 0,
             capture_mode: CaptureMode::Auto,
+            broker_socket: None,
         }
     }
 }
@@ -160,6 +169,11 @@ impl HostOptions {
         {
             opts.capture_mode = parse_capture_mode(&raw_capture_mode)
                 .with_context(|| format!("invalid PERIGEE_CAPTURE_MODE '{raw_capture_mode}'"))?;
+        }
+        if let Some(raw_broker_socket) = get("PERIGEE_BROKER_SOCKET")
+            && !raw_broker_socket.is_empty()
+        {
+            opts.broker_socket = Some(PathBuf::from(raw_broker_socket));
         }
         Ok(opts)
     }
@@ -229,6 +243,8 @@ pub enum HostTool {
         output: usize,
         capture_mode: CaptureMode,
     },
+    /// Privileged, network-isolated Linux capture broker listening on Unix socket `socket`.
+    CaptureBroker { socket: PathBuf },
 }
 
 /// Parsed arguments for `perigee-host pair`.
@@ -255,6 +271,9 @@ pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand
         Some("headless-check") => bail!("headless-check takes no arguments"),
         Some("capture-worker") => {
             return parse_capture_worker_args(&args[1..]).map(HostCommand::Tool);
+        }
+        Some("capture-broker") => {
+            return parse_capture_broker_args(&args[1..]).map(HostCommand::Tool);
         }
         _ => {}
     }
@@ -351,6 +370,16 @@ pub fn parse_host_args(args: &[String], base: HostOptions) -> Result<HostCommand
                     .ok_or_else(|| anyhow!("--capture-mode needs a value: auto, dmabuf, or shm"))?;
                 opts.capture_mode = parse_capture_mode(val)
                     .with_context(|| format!("invalid --capture-mode '{val}'"))?;
+                i += 2;
+            }
+            "--broker-socket" => {
+                let val = slice
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow!("--broker-socket needs a value"))?;
+                if val.is_empty() {
+                    bail!("--broker-socket needs a value");
+                }
+                opts.broker_socket = Some(PathBuf::from(val));
                 i += 2;
             }
             other => bail!("unknown argument '{other}'; run with --help"),
@@ -504,6 +533,27 @@ fn parse_capture_worker_args(args: &[String]) -> Result<HostTool> {
         output,
         capture_mode,
     })
+}
+
+fn parse_capture_broker_args(args: &[String]) -> Result<HostTool> {
+    let mut socket = PathBuf::from("/run/perigee/capture-broker.sock");
+    let mut i = 0;
+    while i < args.len() {
+        let flag = args[i].as_str();
+        match flag {
+            "--socket" => {
+                let Some(value) = args.get(i + 1).filter(|v| !v.is_empty()) else {
+                    bail!("--socket needs a value");
+                };
+                socket = PathBuf::from(value);
+                i += 2;
+            }
+            other => bail!(
+                "unknown argument '{other}'; usage: perigee-host capture-broker [--socket <PATH>]"
+            ),
+        }
+    }
+    Ok(HostTool::CaptureBroker { socket })
 }
 
 /// Runs a key-management subcommand and returns the text to print.
@@ -763,11 +813,21 @@ pub fn run_host_tool(tool: &HostTool) -> Result<String> {
                     std::thread::sleep(WORKER_FRAME_INTERVAL);
                 }
             }
+            HostTool::CaptureBroker { socket } => {
+                let listener = crate::backends::CaptureBroker::bind_broker_listener(socket)?;
+                let broker = Arc::new(crate::backends::CaptureBroker::new(
+                    crate::backends::WorkerCommand::current()?,
+                ));
+                broker.serve_listener(listener)?;
+                Ok("capture-broker stopped".to_string())
+            }
         }
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = tool;
+        if matches!(tool, HostTool::CaptureBroker { .. }) {
+            bail!("capture-broker is only supported on Linux");
+        }
         bail!("snapshot, input-test, outputs, and headless-check are Linux only")
     }
 }
@@ -837,7 +897,8 @@ pub fn bind_host(options: &HostOptions) -> Result<(Arc<PerigeeHostDaemon>, QuicS
     let mut daemon = PerigeeHostDaemon::new(options.node_name.clone(), backend)
         .with_codec(options.codec)
         .with_output_index(options.output_index)
-        .with_capture_mode(options.capture_mode);
+        .with_capture_mode(options.capture_mode)
+        .with_broker_socket(options.broker_socket.clone());
     daemon.media = options.media;
     let daemon = Arc::new(daemon);
     let listener = QuicServerListener::bind_mtls(
@@ -1137,6 +1198,7 @@ mod tests {
                 codec: HostCodec::Raw,
                 output_index: 0,
                 capture_mode: CaptureMode::Auto,
+                broker_socket: None,
             })
         );
 
@@ -1811,5 +1873,66 @@ mod tests {
             }
             other => panic!("expected WireMessage::Video, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_host_options_broker_socket_and_capture_broker_args() {
+        let s = |items: &[&str]| items.iter().map(|v| (*v).to_string()).collect::<Vec<_>>();
+
+        assert!(HostOptions::default().broker_socket.is_none());
+
+        let env_broker = |k: &str| {
+            (k == "PERIGEE_BROKER_SOCKET").then(|| "/run/perigee/capture-broker.sock".to_string())
+        };
+        let from_env = HostOptions::from_env_with(env_broker).unwrap();
+        assert_eq!(
+            from_env.broker_socket,
+            Some(PathBuf::from("/run/perigee/capture-broker.sock"))
+        );
+
+        assert_eq!(
+            resolve_host_command(
+                &s(&["--broker-socket", "/tmp/perigee-test.sock"]),
+                env_broker
+            )
+            .unwrap(),
+            HostCommand::Run(HostOptions {
+                broker_socket: Some(PathBuf::from("/tmp/perigee-test.sock")),
+                ..HostOptions::default()
+            })
+        );
+
+        assert!(parse_host_args(&s(&["--broker-socket"]), HostOptions::default()).is_err());
+        assert!(parse_host_args(&s(&["--broker-socket", ""]), HostOptions::default()).is_err());
+
+        assert_eq!(
+            parse_host_args(&s(&["capture-broker"]), HostOptions::default()).unwrap(),
+            HostCommand::Tool(HostTool::CaptureBroker {
+                socket: PathBuf::from("/run/perigee/capture-broker.sock"),
+            })
+        );
+        assert_eq!(
+            parse_host_args(
+                &s(&["capture-broker", "--socket", "/tmp/custom.sock"]),
+                HostOptions::default()
+            )
+            .unwrap(),
+            HostCommand::Tool(HostTool::CaptureBroker {
+                socket: PathBuf::from("/tmp/custom.sock"),
+            })
+        );
+        assert!(
+            parse_host_args(&s(&["capture-broker", "--socket"]), HostOptions::default()).is_err()
+        );
+        assert!(
+            parse_host_args(
+                &s(&["capture-broker", "--socket", ""]),
+                HostOptions::default()
+            )
+            .is_err()
+        );
+        assert!(
+            parse_host_args(&s(&["capture-broker", "--unknown"]), HostOptions::default()).is_err()
+        );
     }
 }

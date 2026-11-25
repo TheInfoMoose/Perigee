@@ -5,6 +5,7 @@
 //! in `perigee-net` before a session handshake starts; the daemon only validates the
 //! `ClientHello`.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -52,6 +53,15 @@ type SessionMedia = (
     Option<ScreenSink>,
     Option<CaptureStop>,
 );
+
+/// Internal options for building a [`HostSessionEngine`].
+struct SessionBuildOptions {
+    media: MediaMode,
+    codec: HostCodec,
+    output_index: usize,
+    capture_mode: CaptureMode,
+    broker_socket: Option<PathBuf>,
+}
 
 /// Active Session Controller on Host Daemon
 pub struct HostSessionEngine {
@@ -158,12 +168,39 @@ impl HostSessionEngine {
     pub fn with_media_codec_output_and_capture_mode(
         session_id: String,
         backend: CaptureBackendType,
-        mut encoder_config: EncoderConfig,
+        encoder_config: EncoderConfig,
         media: MediaMode,
         codec: HostCodec,
         output_index: usize,
         capture_mode: CaptureMode,
     ) -> Result<Self> {
+        Self::with_session_options(
+            session_id,
+            backend,
+            encoder_config,
+            SessionBuildOptions {
+                media,
+                codec,
+                output_index,
+                capture_mode,
+                broker_socket: None,
+            },
+        )
+    }
+
+    fn with_session_options(
+        session_id: String,
+        backend: CaptureBackendType,
+        mut encoder_config: EncoderConfig,
+        options: SessionBuildOptions,
+    ) -> Result<Self> {
+        let SessionBuildOptions {
+            media,
+            codec,
+            output_index,
+            capture_mode,
+            broker_socket,
+        } = options;
         let fps = match (media, codec) {
             (MediaMode::StandIn, _) => encoder_config.target_fps,
             (MediaMode::Live | MediaMode::FollowSeat, HostCodec::Raw) => LIVE_RAW_FPS,
@@ -217,9 +254,13 @@ impl HostSessionEngine {
             MediaMode::Live => {
                 Self::build_live_media(encoder_config, codec, output_index, capture_mode)?
             }
-            MediaMode::FollowSeat => {
-                Self::build_follow_seat_media(encoder_config, codec, output_index, capture_mode)?
-            }
+            MediaMode::FollowSeat => Self::build_follow_seat_media(
+                encoder_config,
+                codec,
+                output_index,
+                capture_mode,
+                broker_socket,
+            )?,
         };
         let (stop_tx, _) = watch::channel(false);
 
@@ -324,6 +365,7 @@ impl HostSessionEngine {
         codec: HostCodec,
         output_index: usize,
         capture_mode: CaptureMode,
+        broker_socket: Option<PathBuf>,
     ) -> Result<SessionMedia> {
         let uinput = Arc::new(
             crate::backends::UinputInjector::new(1920, 1080)
@@ -331,11 +373,14 @@ impl HostSessionEngine {
         );
         let layout_target = uinput.clone();
         let command = crate::backends::WorkerCommand::current()?;
-        let worker = crate::backends::WorkerCapturer::new(command, output_index)
+        let mut worker = crate::backends::WorkerCapturer::new(command, output_index)
             .with_capture_mode(capture_mode)
             .with_layout_sink(Arc::new(move |monitors, active_monitor_id| {
                 layout_target.set_output_layout(monitors, active_monitor_id);
             }));
+        if let Some(path) = broker_socket {
+            worker = worker.with_broker_socket(path);
+        }
         let stopper = worker.stopper();
         let capture_stop: CaptureStop = Arc::new(move || stopper.stop());
         let capturer: Box<dyn FrameCapturer> = Box::new(worker);
@@ -360,6 +405,7 @@ impl HostSessionEngine {
         _codec: HostCodec,
         _output_index: usize,
         _capture_mode: CaptureMode,
+        _broker_socket: Option<PathBuf>,
     ) -> Result<SessionMedia> {
         anyhow::bail!("follow-seat media is only implemented on Linux")
     }
@@ -674,6 +720,9 @@ pub struct PerigeeHostDaemon {
     /// Wayland capture mode for live/follow-seat sessions; [`CaptureMode::Auto`] unless
     /// configured via [`Self::with_capture_mode`].
     capture_mode: CaptureMode,
+    /// Optional `capture-broker` Unix socket path for `follow-seat` sessions; `None` unless
+    /// configured via [`Self::with_broker_socket`].
+    broker_socket: Option<PathBuf>,
 }
 
 impl PerigeeHostDaemon {
@@ -697,6 +746,7 @@ impl PerigeeHostDaemon {
             codec: HostCodec::Raw,
             output_index: 0,
             capture_mode: CaptureMode::Auto,
+            broker_socket: None,
         }
     }
 
@@ -726,6 +776,17 @@ impl PerigeeHostDaemon {
     /// Returns the configured Wayland capture mode.
     pub fn capture_mode(&self) -> CaptureMode {
         self.capture_mode
+    }
+
+    /// Configures an optional `capture-broker` Unix socket path for `follow-seat` sessions.
+    pub fn with_broker_socket(mut self, path: Option<PathBuf>) -> Self {
+        self.broker_socket = path;
+        self
+    }
+
+    /// Returns the configured `capture-broker` Unix socket path, if any.
+    pub fn broker_socket(&self) -> Option<&Path> {
+        self.broker_socket.as_deref()
     }
 
     /// Auto-detects operating system backend (Wayland/COSMIC, X11 fallback, DXGI, or ScreenCaptureKit).
@@ -782,14 +843,17 @@ impl PerigeeHostDaemon {
         session_id: String,
         encoder_config: EncoderConfig,
     ) -> Result<Arc<HostSessionEngine>> {
-        let session = Arc::new(HostSessionEngine::with_media_codec_output_and_capture_mode(
+        let session = Arc::new(HostSessionEngine::with_session_options(
             session_id,
             self.backend,
             encoder_config,
-            self.media,
-            self.codec,
-            self.output_index,
-            self.capture_mode,
+            SessionBuildOptions {
+                media: self.media,
+                codec: self.codec,
+                output_index: self.output_index,
+                capture_mode: self.capture_mode,
+                broker_socket: self.broker_socket.clone(),
+            },
         )?);
         let mut sessions = self.active_sessions.lock().await;
         sessions.push(session.clone());
@@ -2263,5 +2327,24 @@ mod tests {
         )
         .with_capture_mode(CaptureMode::Dmabuf);
         assert_eq!(selected_daemon.capture_mode(), CaptureMode::Dmabuf);
+    }
+
+    #[test]
+    fn test_daemon_with_broker_socket_stores_path() {
+        let default_daemon = PerigeeHostDaemon::new(
+            "broker-default".to_string(),
+            CaptureBackendType::WaylandPipeWire,
+        );
+        assert!(default_daemon.broker_socket().is_none());
+
+        let selected_daemon = PerigeeHostDaemon::new(
+            "broker-selected".to_string(),
+            CaptureBackendType::WaylandPipeWire,
+        )
+        .with_broker_socket(Some(PathBuf::from("/run/perigee/capture-broker.sock")));
+        assert_eq!(
+            selected_daemon.broker_socket(),
+            Some(Path::new("/run/perigee/capture-broker.sock"))
+        );
     }
 }

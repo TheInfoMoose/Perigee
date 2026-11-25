@@ -4,9 +4,11 @@
 //! The parent keeps `CAP_SETUID`/`CAP_SETGID` only to start the worker; the worker gets the
 //! session's uid and gid, no supplementary groups and no ambient capabilities.
 
+use std::fs::File;
 use std::io::{BufReader, Read};
+use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -187,10 +189,16 @@ pub fn read_worker_frame(reader: &mut impl Read) -> Result<CapturedFrame> {
     }
 }
 
+#[derive(Debug)]
+enum WorkerLifeline {
+    Local { _stdin: ChildStdin },
+    Broker { _stdin: File },
+}
+
 #[derive(Debug, Default)]
 struct StopState {
     stopped: bool,
-    lifeline: Option<ChildStdin>,
+    lifeline: Option<WorkerLifeline>,
 }
 
 /// Stops the capture worker a [`WorkerCapturer`] is running, from any thread. A session stop
@@ -287,6 +295,35 @@ fn should_warn_poll_failure(consecutive_failures: u32) -> bool {
     consecutive_failures > 0 && consecutive_failures.is_power_of_two()
 }
 
+enum RunningWorker {
+    Local {
+        session: ActiveSession,
+        child: Child,
+        reader: BufReader<ChildStdout>,
+    },
+    Broker {
+        session_id: String,
+        _control: UnixStream,
+        reader: BufReader<File>,
+    },
+}
+
+impl RunningWorker {
+    fn session_id(&self) -> &str {
+        match self {
+            Self::Local { session, .. } => &session.id,
+            Self::Broker { session_id, .. } => session_id,
+        }
+    }
+
+    fn read_message(&mut self) -> Result<WorkerMessage> {
+        match self {
+            Self::Local { reader, .. } => read_worker_message(reader),
+            Self::Broker { reader, .. } => read_worker_message(reader),
+        }
+    }
+}
+
 /// Captures whichever Wayland session logind reports active on seat0, through a
 /// `capture-worker` child running as that session's user. Restarts the worker when the active
 /// session changes or the worker exits (at most once per poll); while no Wayland session is
@@ -296,9 +333,10 @@ pub struct WorkerCapturer {
     command: WorkerCommand,
     output: usize,
     capture_mode: CaptureMode,
+    broker_socket: Option<PathBuf>,
     seat: String,
     loginctl: Box<dyn LoginctlRunner + Send + Sync>,
-    current: Option<(ActiveSession, Child, BufReader<ChildStdout>)>,
+    current: Option<RunningWorker>,
     stop_state: Arc<Mutex<StopState>>,
     last_poll: Option<Instant>,
     consecutive_poll_failures: u32,
@@ -325,6 +363,7 @@ impl WorkerCapturer {
             command,
             output,
             capture_mode: CaptureMode::Auto,
+            broker_socket: None,
             seat: "seat0".to_string(),
             loginctl,
             current: None,
@@ -366,6 +405,17 @@ impl WorkerCapturer {
         self.capture_mode
     }
 
+    /// Configures a `capture-broker` Unix socket path to delegate worker spawning and reaping.
+    pub fn with_broker_socket(mut self, path: PathBuf) -> Self {
+        self.broker_socket = Some(path);
+        self
+    }
+
+    /// Returns the configured `capture-broker` Unix socket path, if any.
+    pub fn broker_socket(&self) -> Option<&Path> {
+        self.broker_socket.as_deref()
+    }
+
     /// A handle that stops the current (and any later) worker from another thread.
     pub fn stopper(&self) -> WorkerStopper {
         WorkerStopper(self.stop_state.clone())
@@ -395,7 +445,7 @@ impl WorkerCapturer {
             bail!("capture stopped");
         }
         let changed = match (&self.current, &active) {
-            (Some((running, _, _)), Some(now)) => running.id != now.id,
+            (Some(running), Some(now)) => running.session_id() != now.id,
             (None, None) => false,
             _ => true,
         };
@@ -406,6 +456,45 @@ impl WorkerCapturer {
         if let Some(session) = active {
             if self.is_stopped() {
                 bail!("capture stopped");
+            }
+            if let Some(ref socket_path) = self.broker_socket {
+                info!(
+                    session = %session.id,
+                    broker_socket = %socket_path.display(),
+                    "Requesting capture worker from capture-broker"
+                );
+                let Some(broker_worker) = crate::backends::broker::request_broker_worker(
+                    socket_path,
+                    self.output,
+                    self.capture_mode,
+                )?
+                else {
+                    self.current = None;
+                    return Ok(());
+                };
+                let rejected_stdin = {
+                    let mut state = self.stop_state.lock().unwrap_or_else(|e| e.into_inner());
+                    if state.stopped {
+                        Some(broker_worker.stdin)
+                    } else {
+                        state.lifeline = Some(WorkerLifeline::Broker {
+                            _stdin: broker_worker.stdin,
+                        });
+                        None
+                    }
+                };
+                if let Some(stdin) = rejected_stdin {
+                    drop(stdin);
+                    drop(broker_worker.stdout);
+                    drop(broker_worker.control);
+                    bail!("capture stopped");
+                }
+                self.current = Some(RunningWorker::Broker {
+                    session_id: broker_worker.session_id,
+                    _control: broker_worker.control,
+                    reader: BufReader::new(broker_worker.stdout),
+                });
+                return Ok(());
             }
             info!(
                 session = %session.id,
@@ -428,7 +517,7 @@ impl WorkerCapturer {
                 if state.stopped {
                     Some(stdin)
                 } else {
-                    state.lifeline = Some(stdin);
+                    state.lifeline = Some(WorkerLifeline::Local { _stdin: stdin });
                     None
                 }
             };
@@ -438,7 +527,11 @@ impl WorkerCapturer {
                 wait_for_worker_exit(&session, child);
                 bail!("capture stopped");
             }
-            self.current = Some((session, child, BufReader::new(stdout)));
+            self.current = Some(RunningWorker::Local {
+                session,
+                child,
+                reader: BufReader::new(stdout),
+            });
         }
         Ok(())
     }
@@ -452,9 +545,26 @@ impl WorkerCapturer {
             .lifeline
             .take();
         drop(lifeline);
-        if let Some((session, child, reader)) = self.current.take() {
-            drop(reader);
-            wait_for_worker_exit(&session, child);
+        if let Some(running) = self.current.take() {
+            match running {
+                RunningWorker::Local {
+                    session,
+                    child,
+                    reader,
+                } => {
+                    drop(reader);
+                    wait_for_worker_exit(&session, child);
+                }
+                RunningWorker::Broker {
+                    session_id,
+                    _control,
+                    reader,
+                } => {
+                    drop(reader);
+                    drop(_control);
+                    info!(session = %session_id, "Disconnected from broker capture worker");
+                }
+            }
         }
     }
 
@@ -539,7 +649,7 @@ impl FrameCapturer for WorkerCapturer {
         let read = loop {
             let next = match self.current.as_mut() {
                 None => break None,
-                Some((session, _, reader)) => (session.id.clone(), read_worker_message(reader)),
+                Some(running) => (running.session_id().to_string(), running.read_message()),
             };
             match next {
                 (_, Ok(WorkerMessage::DisplayLayout(monitors))) => {
@@ -1187,5 +1297,89 @@ mod tests {
 
         drop(capturer);
         let _ = std::fs::remove_file(&temp_path);
+    }
+
+    #[test]
+    fn test_worker_capturer_via_broker_reads_frame_and_stops_cleanly() {
+        // SAFETY: geteuid and getegid only read the calling process's credentials; they cannot fail.
+        let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        assert!(
+            uid != 0 && gid != 0,
+            "test_worker_capturer_via_broker_reads_frame_and_stops_cleanly requires non-root uid/gid"
+        );
+
+        let video_msg = WireMessage::Video(VideoFrameMessage {
+            frame_id: 1,
+            monitor_id: 1,
+            timestamp_us: 777,
+            codec: VideoCodec::RawBgra,
+            is_keyframe: true,
+            width: 2,
+            height: 2,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            payload: vec![9; 16],
+        });
+        let framed = encode_length_prefixed(&video_msg).unwrap();
+
+        let frame_path = std::env::temp_dir().join(format!(
+            "perigee-worker-broker-frame-{}.bin",
+            std::process::id()
+        ));
+        std::fs::write(&frame_path, &framed).unwrap();
+
+        let sock_path = std::env::temp_dir().join(format!(
+            "perigee-worker-broker-test-{}.sock",
+            std::process::id()
+        ));
+        let listener = crate::backends::broker::CaptureBroker::bind_broker_listener(&sock_path)
+            .expect("bind temp broker socket");
+
+        let script = format!(
+            "cat '{}'; while IFS= read -r _; do :; done",
+            frame_path.display()
+        );
+        let (broker_loginctl, _) = FakeLoginctl::new();
+        let broker = Arc::new(crate::backends::broker::CaptureBroker::with_loginctl(
+            fake_worker_command(&script),
+            "seat0",
+            Arc::new(broker_loginctl),
+        ));
+
+        let server_broker = Arc::clone(&broker);
+        let broker_thread = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            server_broker.handle_connection(stream);
+        });
+
+        let (capturer_loginctl, _) = FakeLoginctl::new();
+        let unused_cmd = WorkerCommand {
+            program: PathBuf::from("/nonexistent/perigee-host"),
+            prefix_args: Vec::new(),
+        };
+        let mut capturer =
+            WorkerCapturer::with_loginctl(unused_cmd, 0, Box::new(capturer_loginctl))
+                .with_broker_socket(sock_path.clone());
+        assert_eq!(capturer.broker_socket(), Some(sock_path.as_path()));
+
+        let frame = capturer.capture_next_frame().unwrap();
+        assert_eq!((frame.width, frame.height, frame.stride), (2, 2, 8));
+        assert_eq!(frame.data, vec![9; 16]);
+        assert!(capturer.is_live_display());
+
+        let started = Instant::now();
+        capturer.stopper().stop();
+        drop(capturer);
+
+        broker_thread.join().unwrap();
+        let elapsed = started.elapsed();
+
+        let _ = std::fs::remove_file(&sock_path);
+        let _ = std::fs::remove_file(&frame_path);
+
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "broker thread should exit cleanly within 1s, took {elapsed:?}"
+        );
     }
 }
