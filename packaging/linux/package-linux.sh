@@ -80,6 +80,8 @@ install -m 0644 "packaging/linux/com.theinfomoose.Perigee.metainfo.xml" "${STAGE
 install -m 0644 "packaging/icons/perigee.png" "${STAGE_TAR}/share/icons/com.theinfomoose.Perigee.png"
 install_hicolor_icons "${STAGE_TAR}/share/icons/hicolor"
 install -m 0644 "packaging/linux/perigee-host.service" "${STAGE_TAR}/share/systemd/"
+install -m 0644 "packaging/linux/perigee-capture-broker.service" "${STAGE_TAR}/share/systemd/"
+install -m 0644 "packaging/linux/perigee-capture-broker.socket" "${STAGE_TAR}/share/systemd/"
 install -m 0644 "packaging/linux/perigee.sysusers.conf" "${STAGE_TAR}/share/systemd/"
 install -m 0644 "packaging/linux/60-perigee-uinput.rules" "${STAGE_TAR}/share/systemd/"
 install -m 0644 "packaging/linux/perigee-uinput.conf" "${STAGE_TAR}/share/systemd/"
@@ -112,6 +114,8 @@ if command -v dpkg-deb >/dev/null 2>&1; then
     install -m 0644 "packaging/linux/com.theinfomoose.Perigee.metainfo.xml" "${DEB_ROOT}/usr/share/metainfo/com.theinfomoose.Perigee.metainfo.xml"
     install_hicolor_icons "${DEB_ROOT}/usr/share/icons/hicolor"
     install -m 0644 "packaging/linux/perigee-host.service" "${DEB_ROOT}/lib/systemd/system/perigee-host.service"
+    install -m 0644 "packaging/linux/perigee-capture-broker.service" "${DEB_ROOT}/lib/systemd/system/perigee-capture-broker.service"
+    install -m 0644 "packaging/linux/perigee-capture-broker.socket" "${DEB_ROOT}/lib/systemd/system/perigee-capture-broker.socket"
     install -m 0644 "packaging/linux/perigee.sysusers.conf" "${DEB_ROOT}/usr/lib/sysusers.d/perigee.conf"
     install -m 0644 "packaging/linux/60-perigee-uinput.rules" "${DEB_ROOT}/usr/lib/udev/rules.d/60-perigee-uinput.rules"
     install -m 0644 "packaging/linux/perigee-uinput.conf" "${DEB_ROOT}/usr/lib/modules-load.d/perigee-uinput.conf"
@@ -200,6 +204,8 @@ done
 mkdir -p %{buildroot}/usr/share/icons/hicolor/scalable/apps
 install -m 0644 "${WORKSPACE_ROOT}/packaging/icons/hicolor/scalable/apps/com.theinfomoose.Perigee-symbolic.svg" %{buildroot}/usr/share/icons/hicolor/scalable/apps/com.theinfomoose.Perigee-symbolic.svg
 install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/perigee-host.service" %{buildroot}/usr/lib/systemd/system/perigee-host.service
+install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/perigee-capture-broker.service" %{buildroot}/usr/lib/systemd/system/perigee-capture-broker.service
+install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/perigee-capture-broker.socket" %{buildroot}/usr/lib/systemd/system/perigee-capture-broker.socket
 install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/perigee.sysusers.conf" %{buildroot}/usr/lib/sysusers.d/perigee.conf
 install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/60-perigee-uinput.rules" %{buildroot}/usr/lib/udev/rules.d/60-perigee-uinput.rules
 install -m 0644 "${WORKSPACE_ROOT}/packaging/linux/perigee-uinput.conf" %{buildroot}/usr/lib/modules-load.d/perigee-uinput.conf
@@ -220,6 +226,8 @@ setfacl -m g:perigee:rw /dev/uinput 2>/dev/null || :
 /usr/share/metainfo/com.theinfomoose.Perigee.metainfo.xml
 /usr/share/icons/hicolor/*/apps/com.theinfomoose.Perigee*
 /usr/lib/systemd/system/perigee-host.service
+/usr/lib/systemd/system/perigee-capture-broker.service
+/usr/lib/systemd/system/perigee-capture-broker.socket
 /usr/lib/sysusers.d/perigee.conf
 /usr/lib/udev/rules.d/60-perigee-uinput.rules
 /usr/lib/modules-load.d/perigee-uinput.conf
@@ -265,6 +273,8 @@ install -m 0644 "packaging/linux/com.theinfomoose.Perigee.desktop" "${APPDIR}/us
 install -m 0644 "packaging/linux/com.theinfomoose.Perigee.metainfo.xml" "${APPDIR}/usr/share/metainfo/com.theinfomoose.Perigee.metainfo.xml"
 install_hicolor_icons "${APPDIR}/usr/share/icons/hicolor"
 install -m 0644 "packaging/linux/perigee-host.service" "${APPDIR}/usr/lib/systemd/system/perigee-host.service"
+install -m 0644 "packaging/linux/perigee-capture-broker.service" "${APPDIR}/usr/lib/systemd/system/perigee-capture-broker.service"
+install -m 0644 "packaging/linux/perigee-capture-broker.socket" "${APPDIR}/usr/lib/systemd/system/perigee-capture-broker.socket"
 install -m 0644 "README.md" "${APPDIR}/usr/share/doc/perigee/README.md"
 install -m 0644 "LICENSE" "${APPDIR}/usr/share/doc/perigee/LICENSE"
 

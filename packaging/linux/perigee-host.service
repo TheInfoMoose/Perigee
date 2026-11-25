@@ -1,6 +1,7 @@
 [Unit]
 Description=Perigee host (remote desktop; follows the active seat0 session, greeter included)
-After=network-online.target systemd-logind.service
+After=network-online.target systemd-logind.service perigee-capture-broker.socket
+Requires=perigee-capture-broker.socket
 Wants=network-online.target
 
 [Service]
@@ -11,17 +12,32 @@ Group=perigee
 StateDirectory=perigee
 StateDirectoryMode=0700
 Environment=PERIGEE_CONFIG_DIR=/var/lib/perigee
+Environment=PERIGEE_BROKER_SOCKET=/run/perigee/capture-broker.sock
 # Set PERIGEE_BIND_INTERFACE=<vpn interface> (e.g. wg0) in a drop-in;
 # without it the host listens on 127.0.0.1:4433 only.
 ExecStart=/usr/bin/perigee-host --media follow-seat
 Restart=on-failure
 RestartSec=5
-# CAP_SETUID/CAP_SETGID: start each capture worker as the active session's user.
 # CAP_NET_RAW: SO_BINDTODEVICE for --interface / PERIGEE_BIND_INTERFACE.
-# CAP_KILL: fallback to kill hung capture workers after stdin close times out.
-AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_NET_RAW CAP_KILL
-CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_NET_RAW CAP_KILL
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
 NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+DevicePolicy=closed
+DeviceAllow=/dev/uinput rw
+DeviceAllow=char-drm rw
 
 [Install]
 WantedBy=multi-user.target

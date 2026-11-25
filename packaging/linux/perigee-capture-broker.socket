@@ -1,0 +1,12 @@
+[Unit]
+Description=Perigee capture worker spawn broker socket
+
+[Socket]
+ListenStream=/run/perigee/capture-broker.sock
+SocketUser=perigee
+SocketGroup=perigee
+SocketMode=0660
+DirectoryMode=0750
+
+[Install]
+WantedBy=sockets.target

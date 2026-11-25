@@ -1,0 +1,27 @@
+[Unit]
+Description=Perigee capture worker spawn broker (non-root seat0 sessions only)
+After=systemd-logind.service
+Requires=perigee-capture-broker.socket
+
+[Service]
+Type=simple
+User=perigee
+Group=perigee
+ExecStart=/usr/bin/perigee-host capture-broker --socket /run/perigee/capture-broker.sock
+Restart=on-failure
+RestartSec=5
+AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_KILL
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_KILL
+NoNewPrivileges=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictRealtime=yes
+
+[Install]
+Also=perigee-capture-broker.socket
