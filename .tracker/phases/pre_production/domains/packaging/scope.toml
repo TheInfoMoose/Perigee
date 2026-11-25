@@ -141,6 +141,6 @@ created_at = "2026-11-23T02:14:37Z"
 [[items.tasks]]
 id = "TASK-0150"
 title = "Harden perigee-host.service (drop CAP_SETUID/CAP_SETGID/CAP_KILL, add systemd sandboxing), add perigee-capture-broker.{service,socket}, and wire into package-linux.sh (TASK-0100)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-25T03:35:28Z"
