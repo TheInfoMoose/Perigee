@@ -4,17 +4,22 @@ schema_version = 2
 id = "TASK-0144"
 type = "task"
 title = "Fix HiDPI logical/physical coordinate mixing in uinput multi-monitor EV_ABS mapping and sync output_layout in set_screen_size (BUG-0040)"
-status = "open"
+status = "closed"
 severity = "medium"
 scope_ref = "inbox"
 created_at = "2026-11-25T01:53:04Z"
-updated_at = "2026-11-25T01:53:04Z"
+updated_at = "2026-11-25T01:59:01Z"
 source_ref = "STEP 9BA"
 
 [effort]
-logged_time_minutes = 0
+logged_time_minutes = 3
 iteration_count = 1
+last_timer_session = "TASK-0144@2026-11-25T01:56:00Z"
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-25"
+commit = "bc32e9f"
+summary = "STEP 9BA: Fix HiDPI logical/physical coordinate mixing in `uinput` multi-monitor `EV_ABS` mapping and sync `output_layout` on `set_screen_size` (phased check PASS)"
