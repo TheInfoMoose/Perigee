@@ -388,6 +388,6 @@ created_at = "2026-11-25T03:35:28Z"
 [[items.tasks]]
 id = "TASK-0149"
 title = "Add perigee-host capture-broker subcommand and wire --broker-socket / PERIGEE_BROKER_SOCKET through HostOptions, PerigeeHostDaemon, and WorkerCapturer (TASK-0100)"
-status = "open"
+status = "closed"
 severity = "medium"
 created_at = "2026-11-25T03:35:28Z"
