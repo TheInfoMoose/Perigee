@@ -1,31 +1,15 @@
 # Written by phased-step.sh new-phase from the plan's Up Next table.
 # Regenerated every phase; edits here are lost.
-phase = "9"
+phase = "9b"
 
 [[queue]]
-step = "9A"
-item = "TASK-0137"
+step = "9BA"
+item = "TASK-0144"
 
 [[queue]]
-step = "9B"
-item = "TASK-0138"
+step = "9BB"
+item = "TASK-0145"
 
 [[queue]]
-step = "9C"
-item = "TASK-0139"
-
-[[queue]]
-step = "9D"
-item = "TASK-0140"
-
-[[queue]]
-step = "9E"
-item = "TASK-0141"
-
-[[queue]]
-step = "9F"
-item = "TASK-0142"
-
-[[queue]]
-user = "9G"
-title = "Live COSMIC multi-output (outputs, --output), DMA-BUF capture (--capture-mode dmabuf), and vkms headless KMS spike"
+step = "9BC"
+item = "TASK-0146"
