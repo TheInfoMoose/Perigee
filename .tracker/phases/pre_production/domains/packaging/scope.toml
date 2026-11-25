@@ -158,3 +158,10 @@ title = "Harden perigee-host.service (drop CAP_SETUID/CAP_SETGID/CAP_KILL, add s
 status = "closed"
 severity = "medium"
 created_at = "2026-11-25T03:35:28Z"
+
+[[items.tasks]]
+id = "TASK-0153"
+title = "Fix perigee-capture-broker.socket DirectoryMode=0755 (BUG-0044) and add AF_NETLINK to perigee-host.service RestrictAddressFamilies (BUG-0046)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-25T05:25:52Z"

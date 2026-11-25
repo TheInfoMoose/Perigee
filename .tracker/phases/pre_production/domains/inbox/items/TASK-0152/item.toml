@@ -1,0 +1,20 @@
+schema_version = 2
+
+[item]
+id = "TASK-0152"
+type = "task"
+title = "Set FD_CLOEXEC on systemd-activated broker listener FD 3 and add unit tests for FD adoption and MAX_BROKER_CONCURRENT_WORKERS saturation (BUG-0045, TASK-0151)"
+status = "open"
+severity = "medium"
+scope_ref = "inbox"
+created_at = "2026-11-25T05:25:52Z"
+updated_at = "2026-11-25T05:25:52Z"
+source_ref = "STEP 10BA"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+previous_fixes = []

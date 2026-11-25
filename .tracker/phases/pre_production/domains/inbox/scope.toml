@@ -391,3 +391,10 @@ title = "Add perigee-host capture-broker subcommand and wire --broker-socket / P
 status = "closed"
 severity = "medium"
 created_at = "2026-11-25T03:35:28Z"
+
+[[items.tasks]]
+id = "TASK-0152"
+title = "Set FD_CLOEXEC on systemd-activated broker listener FD 3 and add unit tests for FD adoption and MAX_BROKER_CONCURRENT_WORKERS saturation (BUG-0045, TASK-0151)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-25T05:25:52Z"

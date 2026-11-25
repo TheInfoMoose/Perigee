@@ -1,0 +1,20 @@
+schema_version = 2
+
+[item]
+id = "TASK-0153"
+type = "task"
+title = "Fix perigee-capture-broker.socket DirectoryMode=0755 (BUG-0044) and add AF_NETLINK to perigee-host.service RestrictAddressFamilies (BUG-0046)"
+status = "open"
+severity = "medium"
+scope_ref = "packaging"
+created_at = "2026-11-25T05:25:52Z"
+updated_at = "2026-11-25T05:25:52Z"
+source_ref = "STEP 10BB"
+
+[effort]
+logged_time_minutes = 0
+iteration_count = 1
+
+[history]
+recurrence_count = 0
+previous_fixes = []
