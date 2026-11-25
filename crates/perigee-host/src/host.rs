@@ -714,6 +714,21 @@ pub fn run_host_tool(tool: &HostTool) -> Result<String> {
                     *capture_mode,
                 )?;
                 let mut stdout = std::io::stdout().lock();
+                if let Ok(monitors) = capturer.enumerate_monitors()
+                    && !monitors.is_empty()
+                {
+                    let layout_msg = perigee_protocol::WireMessage::Topology(
+                        perigee_protocol::TopologyMessage::DisplayLayout { monitors },
+                    );
+                    let framed = perigee_protocol::encode_length_prefixed(&layout_msg)?;
+                    if stdout
+                        .write_all(&framed)
+                        .and_then(|()| stdout.flush())
+                        .is_err()
+                    {
+                        return Ok("capture-worker: the reader closed the pipe".to_string());
+                    }
+                }
                 loop {
                     let frame = capturer.capture_next_frame()?;
                     let message = worker_frame_message(&frame)?;

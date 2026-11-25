@@ -290,15 +290,20 @@ impl HostSessionEngine {
         codec: HostCodec,
         output_index: usize,
     ) -> Result<SessionMedia> {
-        let command = crate::backends::WorkerCommand::current()?;
-        let worker = crate::backends::WorkerCapturer::new(command, output_index);
-        let stopper = worker.stopper();
-        let capture_stop: CaptureStop = Arc::new(move || stopper.stop());
-        let capturer: Box<dyn FrameCapturer> = Box::new(worker);
         let uinput = Arc::new(
             crate::backends::UinputInjector::new(1920, 1080)
                 .context("failed to create the /dev/uinput devices")?,
         );
+        let layout_target = uinput.clone();
+        let command = crate::backends::WorkerCommand::current()?;
+        let worker = crate::backends::WorkerCapturer::new(command, output_index).with_layout_sink(
+            Arc::new(move |monitors, active_monitor_id| {
+                layout_target.set_output_layout(monitors, active_monitor_id);
+            }),
+        );
+        let stopper = worker.stopper();
+        let capture_stop: CaptureStop = Arc::new(move || stopper.stop());
+        let capturer: Box<dyn FrameCapturer> = Box::new(worker);
         let sink_target = uinput.clone();
         let screen_sink: ScreenSink = Arc::new(move |width, height| {
             sink_target.set_screen_size(width, height);

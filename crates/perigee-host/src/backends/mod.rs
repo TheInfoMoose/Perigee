@@ -64,4 +64,7 @@ pub use windows::{
     translate_input_event_to_win32,
 };
 #[cfg(target_os = "linux")]
-pub use worker::{WorkerCapturer, WorkerCommand, WorkerStopper, read_worker_frame};
+pub use worker::{
+    LayoutSink, WorkerCapturer, WorkerCommand, WorkerMessage, WorkerStopper, read_worker_frame,
+    read_worker_message,
+};

@@ -15,7 +15,8 @@ use anyhow::{Context, Result, bail};
 use tracing::{debug, info, warn};
 
 use perigee_protocol::{
-    MAX_WIRE_FRAME_BYTES, MonitorInfo, PixelFormat, WireMessage, decode_wire_message,
+    MAX_WIRE_FRAME_BYTES, MonitorInfo, PixelFormat, TopologyMessage, WireMessage,
+    decode_wire_message,
 };
 
 use crate::backends::linux_capture::FrameCapturer;
@@ -111,8 +112,19 @@ impl WorkerCommand {
     }
 }
 
-/// Reads one length-prefixed `WireMessage::Video` raw frame from a capture worker.
-pub fn read_worker_frame(reader: &mut impl Read) -> Result<CapturedFrame> {
+/// Callback invoked whenever the active capture worker reports a non-empty display layout.
+pub type LayoutSink = Arc<dyn Fn(Vec<MonitorInfo>, u32) + Send + Sync>;
+
+/// A decoded message received from a capture worker's stdout pipe.
+#[derive(Debug, Clone)]
+pub enum WorkerMessage {
+    Frame(CapturedFrame),
+    DisplayLayout(Vec<MonitorInfo>),
+}
+
+/// Reads one length-prefixed `WireMessage::Video` or `TopologyMessage::DisplayLayout` message
+/// from a capture worker.
+pub fn read_worker_message(reader: &mut impl Read) -> Result<WorkerMessage> {
     let mut len = [0u8; 4];
     reader
         .read_exact(&mut len)
@@ -125,23 +137,36 @@ pub fn read_worker_frame(reader: &mut impl Read) -> Result<CapturedFrame> {
     reader
         .read_exact(&mut body)
         .context("capture worker sent a truncated frame")?;
-    let WireMessage::Video(msg) = decode_wire_message(&body)? else {
-        bail!("capture worker sent a non-video message");
-    };
-    if !matches!(msg.format, PixelFormat::Bgra8 | PixelFormat::Rgba8) {
-        bail!("capture worker sent a {:?} frame", msg.format);
+    match decode_wire_message(&body)? {
+        WireMessage::Video(msg) => {
+            if !matches!(msg.format, PixelFormat::Bgra8 | PixelFormat::Rgba8) {
+                bail!("capture worker sent a {:?} frame", msg.format);
+            }
+            Ok(WorkerMessage::Frame(CapturedFrame {
+                frame_index: msg.frame_id,
+                timestamp_us: msg.timestamp_us,
+                display_id: msg.monitor_id,
+                width: msg.width,
+                height: msg.height,
+                stride: msg.stride,
+                pixel_format: msg.format,
+                data: msg.payload,
+                is_dmabuf_or_metal_handle: false,
+            }))
+        }
+        WireMessage::Topology(TopologyMessage::DisplayLayout { monitors }) => {
+            Ok(WorkerMessage::DisplayLayout(monitors))
+        }
+        _ => bail!("capture worker sent an unsupported message"),
     }
-    Ok(CapturedFrame {
-        frame_index: msg.frame_id,
-        timestamp_us: msg.timestamp_us,
-        display_id: msg.monitor_id,
-        width: msg.width,
-        height: msg.height,
-        stride: msg.stride,
-        pixel_format: msg.format,
-        data: msg.payload,
-        is_dmabuf_or_metal_handle: false,
-    })
+}
+
+/// Reads one length-prefixed `WireMessage::Video` raw frame from a capture worker.
+pub fn read_worker_frame(reader: &mut impl Read) -> Result<CapturedFrame> {
+    match read_worker_message(reader)? {
+        WorkerMessage::Frame(frame) => Ok(frame),
+        _ => bail!("capture worker sent a non-video message"),
+    }
 }
 
 #[derive(Debug, Default)]
@@ -259,6 +284,8 @@ pub struct WorkerCapturer {
     last_poll: Option<Instant>,
     consecutive_poll_failures: u32,
     last_frame: CapturedFrame,
+    monitors: Vec<MonitorInfo>,
+    layout_sink: Option<LayoutSink>,
     frame_counter: u64,
     start: Instant,
 }
@@ -295,9 +322,17 @@ impl WorkerCapturer {
                 data: vec![0; 64 * 64 * 4],
                 is_dmabuf_or_metal_handle: false,
             },
+            monitors: Vec::new(),
+            layout_sink: None,
             frame_counter: 0,
             start: Instant::now(),
         }
+    }
+
+    /// Configures a callback invoked whenever the active worker reports a non-empty display layout.
+    pub fn with_layout_sink(mut self, sink: LayoutSink) -> Self {
+        self.layout_sink = Some(sink);
+        self
     }
 
     /// A handle that stops the current (and any later) worker from another thread.
@@ -378,6 +413,7 @@ impl WorkerCapturer {
     }
 
     fn stop_worker(&mut self) {
+        self.monitors.clear();
         let lifeline = self
             .stop_state
             .lock()
@@ -417,6 +453,9 @@ impl FrameCapturer for WorkerCapturer {
     }
 
     fn enumerate_monitors(&self) -> Result<Vec<MonitorInfo>> {
+        if !self.monitors.is_empty() {
+            return Ok(self.monitors.clone());
+        }
         Ok(vec![MonitorInfo {
             monitor_id: 1,
             name: "seat0 active session".to_string(),
@@ -466,9 +505,29 @@ impl FrameCapturer for WorkerCapturer {
                 }
             }
         }
-        let read = match self.current.as_mut() {
-            None => None,
-            Some((session, _, reader)) => Some((session.id.clone(), read_worker_frame(reader))),
+        let read = loop {
+            let next = match self.current.as_mut() {
+                None => break None,
+                Some((session, _, reader)) => (session.id.clone(), read_worker_message(reader)),
+            };
+            match next {
+                (_, Ok(WorkerMessage::DisplayLayout(monitors))) => {
+                    if !monitors.is_empty() {
+                        self.monitors = monitors.clone();
+                        if let Some(sink) = &self.layout_sink {
+                            sink(monitors, self.output as u32 + 1);
+                        }
+                    }
+                    if self.is_stopped() {
+                        self.stop_worker();
+                        bail!("capture stopped");
+                    }
+                }
+                (session_id, Ok(WorkerMessage::Frame(frame))) => {
+                    break Some((session_id, Ok(frame)));
+                }
+                (session_id, Err(e)) => break Some((session_id, Err(e))),
+            }
         };
         match read {
             None => {
@@ -899,5 +958,155 @@ mod tests {
 
         let worker = WorkerCapturer::new(command, 2);
         assert_eq!(worker.output_index(), 2);
+    }
+
+    #[test]
+    fn test_read_worker_message_decodes_layout_and_frame() {
+        let monitors = vec![
+            MonitorInfo {
+                monitor_id: 1,
+                name: "DP-1".to_string(),
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+                scale_factor: 1.0,
+                refresh_rate_hz: 60,
+                is_primary: true,
+            },
+            MonitorInfo {
+                monitor_id: 2,
+                name: "HDMI-1".to_string(),
+                x: 1920,
+                y: 0,
+                width: 2560,
+                height: 1440,
+                scale_factor: 1.5,
+                refresh_rate_hz: 120,
+                is_primary: false,
+            },
+        ];
+        let layout_msg = WireMessage::Topology(TopologyMessage::DisplayLayout {
+            monitors: monitors.clone(),
+        });
+        let video_msg = WireMessage::Video(VideoFrameMessage {
+            frame_id: 7,
+            monitor_id: 2,
+            timestamp_us: 99,
+            codec: VideoCodec::RawBgra,
+            is_keyframe: true,
+            width: 2,
+            height: 1,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            payload: vec![10, 20, 30, 40, 50, 60, 70, 80],
+        });
+
+        let mut stream = encode_length_prefixed(&layout_msg).unwrap();
+        stream.extend_from_slice(&encode_length_prefixed(&video_msg).unwrap());
+        let mut cursor = stream.as_slice();
+
+        match read_worker_message(&mut cursor).unwrap() {
+            WorkerMessage::DisplayLayout(decoded) => assert_eq!(decoded, monitors),
+            other => panic!("expected DisplayLayout, got {other:?}"),
+        }
+        match read_worker_message(&mut cursor).unwrap() {
+            WorkerMessage::Frame(frame) => {
+                assert_eq!(
+                    (
+                        frame.frame_index,
+                        frame.display_id,
+                        frame.width,
+                        frame.height,
+                        frame.stride,
+                        frame.timestamp_us
+                    ),
+                    (7, 2, 2, 1, 8, 99)
+                );
+                assert_eq!(frame.data, vec![10, 20, 30, 40, 50, 60, 70, 80]);
+            }
+            other => panic!("expected Frame, got {other:?}"),
+        }
+
+        let unsupported = encode_length_prefixed(&WireMessage::Control(
+            perigee_protocol::ControlMessage::KeepAlive,
+        ))
+        .unwrap();
+        assert!(read_worker_message(&mut unsupported.as_slice()).is_err());
+    }
+
+    #[test]
+    fn test_worker_capturer_forwards_display_layout_to_sink_and_enumerate_monitors() {
+        let monitors = vec![
+            MonitorInfo {
+                monitor_id: 1,
+                name: "DP-1".to_string(),
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+                scale_factor: 1.0,
+                refresh_rate_hz: 60,
+                is_primary: true,
+            },
+            MonitorInfo {
+                monitor_id: 2,
+                name: "HDMI-1".to_string(),
+                x: 1920,
+                y: 0,
+                width: 2560,
+                height: 1440,
+                scale_factor: 1.0,
+                refresh_rate_hz: 60,
+                is_primary: false,
+            },
+        ];
+        let layout_msg = WireMessage::Topology(TopologyMessage::DisplayLayout {
+            monitors: monitors.clone(),
+        });
+        let video_msg = WireMessage::Video(VideoFrameMessage {
+            frame_id: 1,
+            monitor_id: 2,
+            timestamp_us: 123,
+            codec: VideoCodec::RawBgra,
+            is_keyframe: true,
+            width: 2,
+            height: 2,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            payload: vec![42; 16],
+        });
+
+        let mut payload = encode_length_prefixed(&layout_msg).unwrap();
+        payload.extend_from_slice(&encode_length_prefixed(&video_msg).unwrap());
+
+        let temp_path = std::env::temp_dir().join(format!(
+            "perigee-worker-layout-test-{}.bin",
+            std::process::id()
+        ));
+        std::fs::write(&temp_path, &payload).unwrap();
+
+        let received = Arc::new(Mutex::new(None::<(Vec<MonitorInfo>, u32)>));
+        let received_sink = received.clone();
+
+        let (loginctl, _calls) = FakeLoginctl::new();
+        let script = format!(
+            "cat '{}'; while IFS= read -r _; do :; done",
+            temp_path.display()
+        );
+        let mut capturer =
+            WorkerCapturer::with_loginctl(fake_worker_command(&script), 1, Box::new(loginctl))
+                .with_layout_sink(Arc::new(move |layout, active_monitor_id| {
+                    *received_sink.lock().unwrap() = Some((layout, active_monitor_id));
+                }));
+
+        let frame = capturer.capture_next_frame().unwrap();
+        assert_eq!((frame.width, frame.height, frame.stride), (2, 2, 8));
+        assert_eq!(frame.data, vec![42; 16]);
+        assert_eq!(*received.lock().unwrap(), Some((monitors.clone(), 2)));
+        assert_eq!(capturer.enumerate_monitors().unwrap(), monitors);
+
+        drop(capturer);
+        let _ = std::fs::remove_file(&temp_path);
     }
 }
