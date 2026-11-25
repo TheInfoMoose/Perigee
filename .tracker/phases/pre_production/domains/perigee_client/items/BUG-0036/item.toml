@@ -2,11 +2,11 @@
 id = "BUG-0036"
 type = "bug"
 title = "Test GstreamerAv1Decoder::decode has_decoded_frame and DecodeError fallback gating"
-status = "pending"
+status = "closed"
 severity = "low"
 scope_ref = "perigee_client"
 created_at = "2026-11-24T19:13:08Z"
-updated_at = "2026-11-24T19:13:35Z"
+updated_at = "2026-11-25T01:29:52Z"
 
 [effort]
 logged_time_minutes = 0
@@ -14,4 +14,8 @@ iteration_count = 1
 
 [history]
 recurrence_count = 0
-previous_fixes = []
+
+[[history.previous_fixes]]
+date = "2026-11-25"
+commit = "ec7d673"
+summary = "STEP 9A added test_gstreamer_av1_decoder_decode_fallback_gating exercising GstreamerAv1Decoder::decode pre/post-decode fallback gating with a synthetic AV1 keyframe."

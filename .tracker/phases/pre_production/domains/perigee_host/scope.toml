@@ -148,9 +148,23 @@ created_at = "2026-11-24T12:12:23Z"
 [[items.bugs]]
 id = "BUG-0035"
 title = "Test GstreamerAv1Encoder runtime vaav1enc->av1enc fallback through VideoEncoder::encode"
-status = "pending"
+status = "closed"
 severity = "low"
 created_at = "2026-11-24T19:13:08Z"
+
+[[items.bugs]]
+id = "BUG-0040"
+title = "Uinput multi-monitor EV_ABS mapping mixes logical x/y with physical width/height under HiDPI scaling"
+status = "pending"
+severity = "medium"
+created_at = "2026-11-25T01:25:51Z"
+
+[[items.bugs]]
+id = "BUG-0041"
+title = "Follow-seat media never populates UinputInjector::set_output_layout for multi-output input"
+status = "pending"
+severity = "medium"
+created_at = "2026-11-25T01:25:52Z"
 
 [[items.features]]
 id = "FEAT-0002"
