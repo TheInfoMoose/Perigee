@@ -370,3 +370,24 @@ title = "Wire WaylandCapturer and --capture-mode / PERIGEE_CAPTURE_MODE into --m
 status = "closed"
 severity = "medium"
 created_at = "2026-11-25T01:53:04Z"
+
+[[items.tasks]]
+id = "TASK-0147"
+title = "Separate UinputInjector encoded frame dimensions from multi-monitor compositor geometry and eliminate set_output_layout double-lock/race (BUG-0042, BUG-0043)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-25T03:35:28Z"
+
+[[items.tasks]]
+id = "TASK-0148"
+title = "Implement Linux capture-broker module: Unix socket protocol, SCM_RIGHTS FD passing, non-root session validation, and broker-owned worker lifecycle (TASK-0100)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-25T03:35:28Z"
+
+[[items.tasks]]
+id = "TASK-0149"
+title = "Add perigee-host capture-broker subcommand and wire --broker-socket / PERIGEE_BROKER_SOCKET through HostOptions, PerigeeHostDaemon, and WorkerCapturer (TASK-0100)"
+status = "open"
+severity = "medium"
+created_at = "2026-11-25T03:35:28Z"

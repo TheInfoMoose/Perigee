@@ -1,15 +1,23 @@
 # Written by phased-step.sh new-phase from the plan's Up Next table.
 # Regenerated every phase; edits here are lost.
-phase = "9b"
+phase = "10"
 
 [[queue]]
-step = "9BA"
-item = "TASK-0144"
+step = "10A"
+item = "TASK-0147"
 
 [[queue]]
-step = "9BB"
-item = "TASK-0145"
+step = "10B"
+item = "TASK-0148"
 
 [[queue]]
-step = "9BC"
-item = "TASK-0146"
+step = "10C"
+item = "TASK-0149"
+
+[[queue]]
+step = "10D"
+item = "TASK-0150"
+
+[[queue]]
+user = "10E"
+title = "Live COSMIC verification: hardened perigee-host.service + perigee-capture-broker.socket (--media follow-seat), verify CapEff has no CAP_SETUID/CAP_KILL, multi-monitor pointer mapping under --codec raw"
